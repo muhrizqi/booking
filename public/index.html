@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Guest House Masjid Jogokariyan</title>
+  <meta name="description" content="Cek tanggal kosong dan booking Guest House Masjid Jogokariyan, Yogyakarta.">
+  <meta name="theme-color" content="#0e2b27">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <h1 id="h-name">Guest House Masjid Jogokariyan</h1>
+      <p class="lead">Rumah dua lantai di selatan Masjid Jogokariyan, Yogyakarta.</p>
+      <p class="harga" id="h-price"></p>
+      <p class="strip-title">Ketersediaan 14 malam ke depan. Ketuk tanggal yang kosong untuk mulai booking.</p>
+      <div class="strip" id="strip" aria-label="Ketersediaan 14 malam ke depan"></div>
+      <ul class="legend">
+        <li><i class="sw-free"></i>Kosong</li>
+        <li><i class="sw-pending"></i>Menunggu konfirmasi</li>
+        <li><i class="sw-booked"></i>Terisi</li>
+        <li><i class="sw-blocked"></i>Tidak tersedia</li>
+      </ul>
+      <a class="btn light" href="#tanggal">Pilih tanggal</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <noscript><p>Halaman ini membutuhkan JavaScript. Hubungi admin lewat WhatsApp untuk booking.</p></noscript>
+
+    <section id="tanggal">
+      <h2>Pilih tanggal menginap</h2>
+      <p class="hint" id="hint" aria-live="polite">Ketuk tanggal check-in.</p>
+      <div class="panel">
+        <div class="cal-head">
+          <h3 id="cal-title"></h3>
+          <div class="cal-nav">
+            <button type="button" id="prev" aria-label="Bulan sebelumnya">&lsaquo;</button>
+            <button type="button" id="next" aria-label="Bulan berikutnya">&rsaquo;</button>
+          </div>
+        </div>
+        <div class="grid7" id="dow"></div>
+        <div class="grid7" id="cal"></div>
+        <div class="cal-legend">
+          <span><i class="l-pending"></i>Menunggu konfirmasi</span>
+          <span><i class="l-booked"></i>Terisi</span>
+          <span><i class="l-blocked"></i>Tidak tersedia</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="pesan" hidden>
+      <h2>Data pemesan</h2>
+      <div class="panel">
+        <form id="form" novalidate>
+          <div class="stay">
+            <div><b id="s-in"></b><span>Check-in, mulai pukul <span id="s-in-t"></span> WIB</span></div>
+            <div><b id="s-out"></b><span>Check-out, paling lambat <span id="s-out-t"></span> WIB</span></div>
+          </div>
+          <div class="field">
+            <label for="f-name">Nama lengkap</label>
+            <input id="f-name" name="name" autocomplete="name" maxlength="80" required>
+          </div>
+          <div class="field">
+            <label for="f-phone">Nomor WhatsApp</label>
+            <input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="08123456789" maxlength="20" required>
+            <small>Konfirmasi booking dikirim ke nomor ini.</small>
+          </div>
+          <div class="field">
+            <label id="l-guests">Jumlah tamu</label>
+            <div class="stepper" role="group" aria-labelledby="l-guests">
+              <button type="button" id="g-minus" aria-label="Kurangi tamu">&minus;</button>
+              <output id="g-val" aria-live="polite">2</output>
+              <button type="button" id="g-plus" aria-label="Tambah tamu">+</button>
+            </div>
+            <small id="g-note"></small>
+          </div>
+          <div class="field">
+            <label for="f-note">Catatan (boleh dikosongkan)</label>
+            <textarea id="f-note" name="note" maxlength="300" placeholder="Misalnya: rombongan keluarga, tiba malam hari"></textarea>
+          </div>
+          <div class="hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
+          <dl class="rincian" id="rincian"></dl>
+          <p class="catatan" id="dp-note"></p>
+          <button class="btn block" type="submit" id="submit">Kirim booking</button>
+        </form>
+        <div id="done" hidden></div>
+      </div>
+    </section>
+
+    <section id="rumah">
+      <h2>Isi rumah</h2>
+      <div id="rooms"></div>
+    </section>
+
+    <section id="aturan">
+      <h2>Aturan menginap</h2>
+      <p id="r-times"></p>
+      <ol class="rules" id="rules"></ol>
+    </section>
+
+    <section id="lokasi">
+      <h2>Lokasi</h2>
+      <p id="addr"></p>
+      <a class="btn line" id="maps" href="#" target="_blank" rel="noopener">Buka di Google Maps</a>
+    </section>
+
+    <section id="status">
+      <h2>Cek status booking</h2>
+      <p>Masukkan kode booking yang Anda terima, misalnya GH-7K2M9Q.</p>
+      <form class="cari" id="cari">
+        <input id="c-code" aria-label="Kode booking" placeholder="GH-XXXXXX" maxlength="12" autocomplete="off">
+        <button class="btn" type="submit">Cek</button>
+      </form>
+      <div class="panel" id="c-result" hidden style="margin-top:1rem"></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p id="foot-name"></p>
+      <p id="foot-wa"></p>
+    </div>
+  </footer>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/js/app.js" defer></script>
+</body>
+</html>

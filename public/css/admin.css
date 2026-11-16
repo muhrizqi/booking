@@ -1,0 +1,49 @@
+body.admin main.wrap > section { padding-block: 1.25rem 2rem; }
+body.admin h2 { margin-top: 1.75rem; }
+.login { padding-top: 15vh; }
+.login h1 { font-size: 2rem; margin-bottom: 0.4rem; }
+
+.bar { background: var(--lumut); color: #eaf3ee; position: sticky; top: 0; z-index: 10; padding-top: env(safe-area-inset-top); }
+.bar a { color: #b6cfc4; font-size: 0.88rem; }
+.bar-in { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding-block: 0.7rem 0.3rem; }
+.tabs { display: flex; gap: 0.2rem; overflow-x: auto; }
+.tabs button {
+  background: transparent; border: 0; color: #b6cfc4; padding: 0.7rem 0.8rem; cursor: pointer; white-space: nowrap;
+  border-bottom: 3px solid transparent; font-weight: 600;
+}
+.tabs button[aria-selected='true'] { color: #fff; border-bottom-color: var(--kunyit); }
+.count { background: var(--kunyit); color: #2b1f00; border-radius: 999px; padding: 0 0.45rem; font-size: 0.8rem; margin-left: 0.2rem; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.chips button {
+  border: 1px solid var(--garis); background: var(--kertas); border-radius: 999px; padding: 0.4rem 0.9rem; cursor: pointer;
+}
+.chips button[aria-pressed='true'] { background: var(--lumut); color: #fff; border-color: var(--lumut); }
+
+.card { background: var(--kertas); border: 1px solid var(--garis); border-radius: 14px; padding: 0.9rem 1rem; margin-bottom: 0.8rem; }
+.card.flash { box-shadow: 0 0 0 3px var(--kunyit); }
+.card-top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.card .code { font-family: var(--serif); font-weight: 700; font-size: 1.1rem; letter-spacing: 0.03em; }
+.card .who { font-size: 1.05rem; font-weight: 600; margin: 0.4rem 0 0.1rem; }
+.card .meta { color: var(--redam); font-size: 0.9rem; margin: 0; }
+.card .money { margin: 0.5rem 0 0; font-variant-numeric: tabular-nums; }
+.card .note { margin: 0.5rem 0 0; padding: 0.5rem 0.7rem; background: var(--kapur); border-radius: 8px; font-size: 0.92rem; }
+.card .btns { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.8rem; }
+.card .btns .btn { padding: 0.6rem 1rem; font-size: 0.95rem; }
+.btn.danger { background: transparent; color: var(--bata); box-shadow: inset 0 0 0 2px var(--bata); }
+.btn.danger:hover { background: var(--bata-muda); }
+.badge { font-size: 0.78rem; background: var(--kunyit-muda); color: #5a4100; border-radius: 6px; padding: 0.1rem 0.45rem; margin-left: 0.3rem; }
+.chip.sent { background: var(--hijau-muda); color: var(--hijau-tua); }
+.chip.failed { background: var(--bata-muda); color: #6d2615; }
+.chip.skipped, .chip.queued { background: var(--kunyit-muda); color: #5a4100; }
+.empty { text-align: center; color: var(--redam); padding: 2rem 0; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 0.8rem; }
+.detail { margin-top: 0.8rem; }
+.detail ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.day.sel-start { background: var(--hijau); color: #fff; }
+.day.booked { text-decoration: none; }
+body.admin .day.past { cursor: pointer; }
+body.admin .day.booked, body.admin .day.blocked, body.admin .day.pending { cursor: pointer; }
+.msg-body { white-space: pre-wrap; font-size: 0.88rem; background: var(--kapur); border-radius: 8px; padding: 0.6rem 0.7rem; margin: 0.6rem 0 0; max-height: 9rem; overflow: auto; }
+.unit-block + .unit-block { margin-top: 1.2rem; padding-top: 1.2rem; border-top: 1px solid var(--garis); }

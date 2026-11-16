@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0e2b27">
+  <title>Admin Guest House</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body class="admin">
+  <section id="login" class="wrap login" hidden>
+    <h1>Admin Guest House</h1>
+    <p>Masuk untuk melihat dan memproses booking.</p>
+    <form id="login-form" class="panel">
+      <div class="field">
+        <label for="pw">Password</label>
+        <input id="pw" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn block" type="submit">Masuk</button>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header class="bar">
+      <div class="wrap bar-in">
+        <strong id="bar-name">Admin Guest House</strong>
+        <a href="/" target="_blank" rel="noopener">Lihat halaman publik</a>
+      </div>
+      <nav class="wrap tabs" role="tablist" aria-label="Menu admin">
+        <button role="tab" data-tab="booking" aria-selected="true">Booking <span class="count" id="n-pending" hidden></span></button>
+        <button role="tab" data-tab="kalender" aria-selected="false">Kalender</button>
+        <button role="tab" data-tab="pengaturan" aria-selected="false">Pengaturan</button>
+        <button role="tab" data-tab="pesan" aria-selected="false">Pesan</button>
+      </nav>
+    </header>
+
+    <main class="wrap">
+      <section id="tab-booking" role="tabpanel">
+        <div class="chips" id="filters"></div>
+        <div id="list"></div>
+      </section>
+
+      <section id="tab-kalender" role="tabpanel" hidden>
+        <div class="panel">
+          <div class="cal-head">
+            <h3 id="cal-title"></h3>
+            <div class="cal-nav">
+              <button type="button" id="prev" aria-label="Bulan sebelumnya">&lsaquo;</button>
+              <button type="button" id="next" aria-label="Bulan berikutnya">&rsaquo;</button>
+            </div>
+          </div>
+          <div class="grid7" id="dow"></div>
+          <div class="grid7" id="cal"></div>
+          <div class="cal-legend">
+            <span><i class="l-booked"></i>Diterima</span>
+            <span><i class="l-pending"></i>Menunggu</span>
+            <span><i class="l-blocked"></i>Diblokir</span>
+          </div>
+        </div>
+        <div class="panel detail" id="day-detail">Ketuk tanggal untuk melihat isinya.</div>
+
+        <h2>Blokir tanggal</h2>
+        <p class="catatan">Untuk perbaikan, acara masjid, atau tanggal yang tidak disewakan.</p>
+        <form id="block-form" class="panel">
+          <div class="two">
+            <div class="field"><label for="b-start">Dari tanggal</label><input id="b-start" type="date" required></div>
+            <div class="field"><label for="b-end">Sampai tanggal</label><input id="b-end" type="date" required></div>
+          </div>
+          <div class="field"><label for="b-note">Keterangan</label><input id="b-note" maxlength="120" placeholder="Misalnya: perbaikan atap"></div>
+          <button class="btn" type="submit">Blokir tanggal</button>
+        </form>
+        <div id="blocks"></div>
+
+        <h2>Tambah booking manual</h2>
+        <p class="catatan">Untuk tamu yang memesan langsung lewat WhatsApp, telepon, atau OTA. Langsung berstatus diterima dan menutup tanggalnya.</p>
+        <form id="manual-form" class="panel">
+          <div class="field"><label for="m-name">Nama</label><input id="m-name" maxlength="80" required></div>
+          <div class="field"><label for="m-phone">Nomor WhatsApp (opsional)</label><input id="m-phone" type="tel" inputmode="tel" maxlength="20"></div>
+          <div class="two">
+            <div class="field"><label for="m-in">Check-in</label><input id="m-in" type="date" required></div>
+            <div class="field"><label for="m-out">Check-out</label><input id="m-out" type="date" required></div>
+          </div>
+          <div class="two">
+            <div class="field"><label for="m-guests">Jumlah tamu</label><input id="m-guests" type="number" min="1" value="2" required></div>
+            <div class="field"><label for="m-total">Total (kosongkan untuk hitung otomatis)</label><input id="m-total" type="number" min="0" step="1000"></div>
+          </div>
+          <div class="field"><label for="m-note">Catatan</label><input id="m-note" maxlength="300"></div>
+          <button class="btn" type="submit">Simpan booking</button>
+        </form>
+      </section>
+
+      <section id="tab-pengaturan" role="tabpanel" hidden>
+        <p class="catatan" id="wa-state"></p>
+        <form id="settings-form">
+          <h2>Kontak dan pembayaran</h2>
+          <div class="panel">
+            <div class="field"><label for="s-admin_wa">Nomor WhatsApp admin</label><input id="s-admin_wa" type="tel" inputmode="tel"><small>Pemberitahuan booking baru dikirim ke nomor ini, dan tombol WhatsApp di halaman publik mengarah ke sini.</small></div>
+            <div class="field"><label for="s-payment_info">Informasi pembayaran DP</label><textarea id="s-payment_info" rows="4"></textarea><small>Ditampilkan ke penyewa setelah booking. Isi nama bank, nomor rekening, dan atas nama.</small></div>
+            <div class="two">
+              <div class="field"><label for="s-dp_percent">DP (persen dari total)</label><input id="s-dp_percent" type="number" min="0" max="100"></div>
+              <div class="field"><label for="s-pending_hours">Tahan tanggal (jam)</label><input id="s-pending_hours" type="number" min="1" max="720"><small>Booking yang belum diproses menahan tanggal selama ini.</small></div>
+            </div>
+          </div>
+
+          <h2>Aturan menginap</h2>
+          <div class="panel">
+            <div class="two">
+              <div class="field"><label for="s-checkin_time">Jam check-in</label><input id="s-checkin_time" placeholder="14.00"></div>
+              <div class="field"><label for="s-checkout_time">Jam check-out</label><input id="s-checkout_time" placeholder="12.00"></div>
+            </div>
+            <div class="field"><label for="s-rules">Daftar aturan</label><textarea id="s-rules" rows="9"></textarea><small>Satu aturan per baris. Dikirim ke penyewa lewat WhatsApp saat booking diterima, dan tampil di halaman publik.</small></div>
+          </div>
+
+          <h2>Rumah dan harga</h2>
+          <div class="panel" id="units"></div>
+
+          <h2>Lokasi dan nama</h2>
+          <div class="panel">
+            <div class="field"><label for="s-property_name">Nama guest house</label><input id="s-property_name"></div>
+            <div class="field"><label for="s-address">Alamat</label><input id="s-address"></div>
+          </div>
+          <button class="btn block" type="submit">Simpan pengaturan</button>
+        </form>
+        <p style="margin-top:2rem"><button class="btn line" id="logout" type="button">Keluar</button></p>
+      </section>
+
+      <section id="tab-pesan" role="tabpanel" hidden>
+        <p class="catatan" id="wa-state2"></p>
+        <div id="messages"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/js/admin.js" defer></script>
+</body>
+</html>
