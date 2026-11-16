@@ -18,7 +18,7 @@ VOLUME ["/data"]
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD wget -qO- http://127.0.0.1:3000/healthz >/dev/null || exit 1
+  CMD wget -qO- "http://127.0.0.1:${PORT:-3000}/healthz" >/dev/null || exit 1
 
 # Entrypoint memastikan /data bisa ditulis (volume dari Coolify kadang dimiliki root), lalu turun ke user "node".
 ENTRYPOINT ["./docker-entrypoint.sh"]
