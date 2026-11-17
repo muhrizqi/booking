@@ -46,4 +46,10 @@ body.admin h2 { margin-top: 1.75rem; }
 body.admin .day.past { cursor: pointer; }
 body.admin .day.booked, body.admin .day.blocked, body.admin .day.pending { cursor: pointer; }
 .msg-body { white-space: pre-wrap; font-size: 0.88rem; background: var(--kapur); border-radius: 8px; padding: 0.6rem 0.7rem; margin: 0.6rem 0 0; max-height: 9rem; overflow: auto; }
+.btns-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
+.btns-row .btn { padding: 0.6rem 1rem; font-size: 0.95rem; }
+.field select { width: 100%; padding: 0.7rem 0.8rem; border: 1px solid #b4c3ba; border-radius: 10px; background: #fff; }
+#wa-result { white-space: pre-line; }
+#wa-result.ok { color: var(--hijau-tua); font-weight: 600; }
+#wa-result.bad { color: var(--bata); font-weight: 600; }
 .unit-block + .unit-block { margin-top: 1.2rem; padding-top: 1.2rem; border-top: 1px solid var(--garis); }

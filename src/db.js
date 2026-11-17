@@ -74,6 +74,13 @@ const DEFAULT_SETTINGS = {
   checkout_time: '12.00',
   dp_percent: '50',
   pending_hours: '24',
+  // Pengaturan WhatsApp. Nilai awal diambil dari environment variable lama (jika ada),
+  // setelah itu bisa diubah dari menu Pengaturan di panel admin.
+  wa_provider: (process.env.WA_PROVIDER || 'none').toLowerCase(),
+  waha_url: process.env.WAHA_URL || '',
+  waha_api_key: process.env.WAHA_API_KEY || '',
+  waha_session: process.env.WAHA_SESSION || 'default',
+  fonnte_token: process.env.FONNTE_TOKEN || '',
   address: 'Selatan Masjid Jogokariyan, Kampung Jogokariyan, Mantrijeron, Yogyakarta',
   lat: '-7.824630',
   lng: '110.364288',

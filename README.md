@@ -38,7 +38,9 @@ Buka http://localhost:3000 (publik) dan http://localhost:3000/admin (admin). Dat
 4. **Environment Variables** (lihat `.env.example`):
    - `ADMIN_PASSWORD` (wajib)
    - `BASE_URL` (alamat domain lengkap dengan https, dipakai untuk link di pesan WhatsApp)
-   - `WA_PROVIDER`, `FONNTE_TOKEN` atau `WAHA_URL` / `WAHA_API_KEY` / `WAHA_SESSION`
+   - `PORT` (sesuai Ports Exposes di Coolify)
+   - Jangan isi `DATA_DIR`. Di Docker sudah otomatis `/data`.
+   - Pengaturan WhatsApp tidak perlu lewat environment variable, atur dari menu Pengaturan di panel admin.
 5. **Persistent Storage**: tambahkan volume yang dipasang ke `/data`. Tanpa ini, data booking hilang setiap kali redeploy.
 6. Deploy. Health check: `/healthz`.
 
@@ -46,17 +48,24 @@ Setelah login admin, buka **Pengaturan** dan isi informasi rekening DP, jam chec
 
 ## WhatsApp otomatis
 
-- `WA_PROVIDER=fonnte` dengan `FONNTE_TOKEN`, atau
-- `WA_PROVIDER=waha` dengan `WAHA_URL` (dan `WAHA_API_KEY`, `WAHA_SESSION` bila dipakai).
-- `WA_PROVIDER=none` (bawaan): pesan tidak dikirim otomatis, tetapi tetap dicatat di menu **Pesan** dan bisa dikirim lewat tombol WhatsApp di kartu booking.
+Semua diatur dari **Admin, menu Pengaturan**, tanpa mengubah environment variable atau redeploy:
 
-Pesan yang dikirim: booking baru ke admin, dan penyewa saat booking diterima, ditolak, atau dibatalkan. Pesan yang gagal bisa dikirim ulang dari menu **Pesan**.
+- **Nomor admin**: satu nomor per baris (maksimal 5). Semua nomor menerima pemberitahuan booking baru.
+- **Penyedia**: WAHA, Fonnte, atau belum aktif.
+- **WAHA**: alamat WAHA, nama sesi, dan API key. API key tersimpan di server dan tidak pernah ditampilkan kembali di browser.
+- **Cek koneksi** menampilkan status sesi WAHA dan nomor akun pengirim. **Kirim pesan uji** mengirim pesan ke semua nomor admin dan menampilkan hasil per nomor.
+
+Catatan penting: nomor admin harus berbeda dari nomor akun yang terhubung ke WAHA. Pesan dari sebuah nomor ke nomor itu sendiri tidak muncul sebagai notifikasi. Aplikasi memberi peringatan bila keduanya sama.
+
+Jika `WA_PROVIDER`, `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`, atau `FONNTE_TOKEN` sudah ada di environment saat database pertama kali dibuat, nilainya dipakai sebagai nilai awal. Setelah itu menu Pengaturan yang berlaku.
+
+Dengan penyedia "belum aktif", pesan tidak dikirim otomatis tetapi tetap dicatat di menu **Pesan** dan bisa dikirim lewat tombol WhatsApp. Pesan yang gagal bisa dikirim ulang dari menu **Pesan**.
 
 ## Panel admin
 
 - **Booking**: daftar menunggu, diterima, ditolak atau batal. Terima, tolak, atau batalkan dengan satu ketukan.
 - **Kalender**: lihat isi tiap malam, blokir tanggal (perbaikan, acara masjid), dan tambah booking manual untuk tamu dari WhatsApp, telepon, atau OTA.
-- **Pengaturan**: nomor WhatsApp admin, rekening DP, persentase DP, jam check-in dan check-out, daftar aturan, harga, kapasitas, biaya tamu tambahan, dan isi rumah.
+- **Pengaturan**: nomor WhatsApp admin dan koneksi WAHA, rekening DP, persentase DP, jam check-in dan check-out, daftar aturan, harga, kapasitas, biaya tamu tambahan, dan isi rumah.
 - **Pesan**: log semua pesan WhatsApp.
 
 Alamat panel bisa diganti dengan `ADMIN_PATH`, misalnya `/atur`.

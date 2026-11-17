@@ -93,11 +93,40 @@
       </section>
 
       <section id="tab-pengaturan" role="tabpanel" hidden>
-        <p class="catatan" id="wa-state"></p>
         <form id="settings-form">
+          <h2>Nomor admin</h2>
+          <div class="panel">
+            <div class="field"><label for="s-admin_wa">Nomor WhatsApp admin</label><textarea id="s-admin_wa" rows="3" inputmode="tel" placeholder="081234567890"></textarea><small>Satu nomor per baris, maksimal 5. Pemberitahuan booking baru dikirim ke semua nomor ini. Nomor pertama dipakai tombol WhatsApp di halaman publik.</small></div>
+          </div>
+
+          <h2>WhatsApp otomatis</h2>
+          <div class="panel">
+            <div class="field">
+              <label for="s-wa_provider">Penyedia</label>
+              <select id="s-wa_provider">
+                <option value="none">Belum aktif (kirim manual lewat tombol)</option>
+                <option value="waha">WAHA</option>
+                <option value="fonnte">Fonnte</option>
+              </select>
+            </div>
+            <div id="wa-waha">
+              <div class="field"><label for="s-waha_url">Alamat WAHA</label><input id="s-waha_url" type="url" inputmode="url" placeholder="https://waha.lewat.web.id" autocomplete="off"></div>
+              <div class="field"><label for="s-waha_session">Nama sesi</label><input id="s-waha_session" autocomplete="off"></div>
+              <div class="field"><label for="s-waha_api_key">API key WAHA</label><input id="s-waha_api_key" type="password" autocomplete="new-password"><small id="h-waha_api_key"></small></div>
+            </div>
+            <div id="wa-fonnte">
+              <div class="field"><label for="s-fonnte_token">Token Fonnte</label><input id="s-fonnte_token" type="password" autocomplete="new-password"><small id="h-fonnte_token"></small></div>
+            </div>
+            <p class="catatan" id="wa-result" aria-live="polite"></p>
+            <div class="btns-row">
+              <button class="btn line" type="button" id="wa-check">Cek koneksi</button>
+              <button class="btn line" type="button" id="wa-test">Kirim pesan uji</button>
+            </div>
+            <p class="catatan">Simpan pengaturan dulu sebelum mencoba. Cek koneksi memakai nilai yang sudah tersimpan.</p>
+          </div>
+
           <h2>Kontak dan pembayaran</h2>
           <div class="panel">
-            <div class="field"><label for="s-admin_wa">Nomor WhatsApp admin</label><input id="s-admin_wa" type="tel" inputmode="tel"><small>Pemberitahuan booking baru dikirim ke nomor ini, dan tombol WhatsApp di halaman publik mengarah ke sini.</small></div>
             <div class="field"><label for="s-payment_info">Informasi pembayaran DP</label><textarea id="s-payment_info" rows="4"></textarea><small>Ditampilkan ke penyewa setelah booking. Isi nama bank, nomor rekening, dan atas nama.</small></div>
             <div class="two">
               <div class="field"><label for="s-dp_percent">DP (persen dari total)</label><input id="s-dp_percent" type="number" min="0" max="100"></div>

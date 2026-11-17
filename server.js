@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getSettings, setSetting, listUnits, getUnit, tx } from './src/db.js';
-import { queueMessage, deliver, waProvider } from './src/wa.js';
+import { queueMessage, deliver, getWaProvider, sendRaw, wahaStatus } from './src/wa.js';
 import {
   HttpError, allow, todayStr, isDate, addDays, diffDays, normalizePhone, makeCode,
 } from './src/util.js';
@@ -60,6 +60,13 @@ function priceFor(unit, nights, guests, s) {
   const dp = Math.min(total, Math.ceil((total * Number(s.dp_percent || 0)) / 100 / 1000) * 1000);
   return { total, dp };
 }
+
+/** Daftar nomor admin (628xx) dari pengaturan: satu nomor per baris. */
+const adminPhones = (s) =>
+  String(s.admin_wa || '')
+    .split(/[\n,;]+/)
+    .map((x) => normalizePhone(x))
+    .filter(Boolean);
 
 const pendingCutoff = (s) => new Date(Date.now() - Number(s.pending_hours || 24) * 3600e3).toISOString();
 
@@ -168,7 +175,7 @@ app.get('/api/config', (req, res) => {
   res.json({
     today: todayStr(),
     name: s.property_name,
-    admin_wa: normalizePhone(s.admin_wa),
+    admin_wa: adminPhones(s)[0] || null,
     checkin_time: s.checkin_time,
     checkout_time: s.checkout_time,
     dp_percent: Number(s.dp_percent),
@@ -236,10 +243,11 @@ app.post('/api/bookings', (req, res) => {
   });
 
   const base = baseUrl(req);
-  const adminPhone = normalizePhone(s.admin_wa);
-  if (adminPhone) {
+  const adminList = adminPhones(s);
+  const adminPhone = adminList[0] || null;
+  for (const to of adminList) {
     queueMessage({
-      to: adminPhone,
+      to,
       kind: 'admin_new',
       bookingId: booking.id,
       body: adminNewBookingMsg(booking, s, `${base}${ADMIN_PATH}?b=${booking.id}`),
@@ -258,7 +266,7 @@ app.get('/api/status/:code', (req, res) => {
   const s = getSettings();
   const b = db.prepare('SELECT * FROM bookings WHERE code = ?').get(String(req.params.code).toUpperCase());
   if (!b) throw new HttpError(404, 'Kode booking tidak ditemukan.');
-  const adminPhone = normalizePhone(s.admin_wa);
+  const adminPhone = adminPhones(s)[0] || null;
   res.json({
     booking: publicBooking(b, s, { withPayment: true }),
     wa_admin_url: adminPhone ? `https://wa.me/${adminPhone}?text=${encodeURIComponent(guestToAdminMsg(b, s))}` : null,
@@ -303,7 +311,7 @@ admin.use((req, res, next) => {
   next();
 });
 
-admin.get('/session', (req, res) => res.json({ ok: true, wa_provider: waProvider }));
+admin.get('/session', (req, res) => res.json({ ok: true, wa_provider: getWaProvider() }));
 
 admin.get('/bookings', (req, res) => {
   const s = getSettings();
@@ -358,7 +366,7 @@ function decide(req, res, from, to, kind) {
     });
   }
   const unitsById = Object.fromEntries(listUnits().map((u) => [u.id, u]));
-  res.json({ booking: adminBooking(updated, s, base, unitsById), wa_provider: waProvider });
+  res.json({ booking: adminBooking(updated, s, base, unitsById), wa_provider: getWaProvider() });
 }
 admin.post('/bookings/:id/approve', (req, res) => decide(req, res, ['pending'], 'approved', 'approved'));
 admin.post('/bookings/:id/reject', (req, res) => decide(req, res, ['pending'], 'rejected', 'rejected'));
@@ -390,9 +398,16 @@ admin.delete('/blocks/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+const SECRET_KEYS = ['waha_api_key', 'fonnte_token'];
+
 const SETTING_RULES = {
   property_name: { max: 80 },
-  admin_wa: { max: 20, phone: true },
+  admin_wa: { phones: true },
+  wa_provider: { oneOf: ['none', 'waha', 'fonnte'] },
+  waha_url: { max: 200, url: true },
+  waha_session: { max: 80 },
+  waha_api_key: { max: 300, secret: true },
+  fonnte_token: { max: 300, secret: true },
   checkin_time: { max: 10 },
   checkout_time: { max: 10 },
   dp_percent: { int: [0, 100] },
@@ -405,8 +420,15 @@ const SETTING_RULES = {
 admin.get('/settings', (req, res) => {
   const s = getSettings();
   const out = {};
-  for (const k of Object.keys(SETTING_RULES)) out[k] = s[k];
-  res.json({ settings: out, units: listUnits(), wa_provider: waProvider });
+  const secrets = {};
+  for (const k of Object.keys(SETTING_RULES)) {
+    if (SECRET_KEYS.includes(k)) {
+      // Rahasia tidak pernah dikirim ke browser; hanya penanda sudah diisi dan 4 karakter terakhir.
+      out[k] = '';
+      secrets[k] = s[k] ? { set: true, hint: s[k].slice(-4) } : { set: false, hint: '' };
+    } else out[k] = s[k];
+  }
+  res.json({ settings: out, secrets, units: listUnits(), wa_provider: getWaProvider() });
 });
 
 admin.put('/settings', (req, res) => {
@@ -415,13 +437,30 @@ admin.put('/settings', (req, res) => {
   for (const [k, rule] of Object.entries(SETTING_RULES)) {
     if (!(k in settings)) continue;
     let v = settings[k];
+    if (rule.secret) {
+      v = String(v ?? '').trim();
+      if (!v) continue; // kosong = pertahankan nilai yang sudah tersimpan
+      if (v.length > rule.max) throw new HttpError(400, 'Nilai terlalu panjang.');
+      apply.push([k, v]);
+      continue;
+    }
     if (rule.int) {
       v = Number(v);
       if (!Number.isInteger(v) || v < rule.int[0] || v > rule.int[1])
         throw new HttpError(400, `Nilai "${k}" harus angka ${rule.int[0]} sampai ${rule.int[1]}.`);
-    } else if (rule.phone) {
-      v = normalizePhone(v);
-      if (!v) throw new HttpError(400, 'Nomor WhatsApp admin tidak valid.');
+    } else if (rule.phones) {
+      const parts = String(v ?? '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+      const nums = parts.map((x) => normalizePhone(x));
+      if (!parts.length) throw new HttpError(400, 'Isi minimal satu nomor WhatsApp admin.');
+      if (nums.some((n) => !n)) throw new HttpError(400, `Nomor WhatsApp admin tidak valid: ${parts[nums.findIndex((n) => !n)]}`);
+      if (nums.length > 5) throw new HttpError(400, 'Maksimal 5 nomor admin.');
+      v = [...new Set(nums)].join('\n');
+    } else if (rule.oneOf) {
+      v = String(v ?? '').toLowerCase();
+      if (!rule.oneOf.includes(v)) throw new HttpError(400, 'Penyedia WhatsApp tidak dikenal.');
+    } else if (rule.url) {
+      v = String(v ?? '').trim().replace(/\/+$/, '');
+      if (v && !/^https?:\/\/[^\s/]+(:\d+)?(\/\S*)?$/i.test(v)) throw new HttpError(400, 'Alamat WAHA harus diawali http:// atau https://.');
     } else if (rule.multiline) {
       v = String(v ?? '').replace(/\r/g, '').split('\n').map((l) => l.trim()).join('\n').trim().slice(0, rule.max);
     } else {
@@ -449,6 +488,54 @@ admin.put('/settings', (req, res) => {
   res.json({ ok: true });
 });
 
+// Cek koneksi ke penyedia WhatsApp yang tersimpan (tanpa mengirim pesan).
+admin.get('/wa/status', async (req, res, next) => {
+  try {
+    const provider = getWaProvider();
+    const s = getSettings();
+    if (provider === 'none') return res.json({ provider, ok: false, message: 'Penyedia WhatsApp belum dipilih.' });
+    if (provider === 'fonnte')
+      return res.json({ provider, ok: !!s.fonnte_token, message: s.fonnte_token ? 'Token Fonnte sudah diisi. Gunakan kirim pesan uji untuk memastikan.' : 'Token Fonnte belum diisi.' });
+    try {
+      const st = await wahaStatus();
+      const clash = adminPhones(s).filter((p) => p === st.number);
+      const working = st.status === 'WORKING';
+      res.json({
+        provider, ok: working, status: st.status, number: st.number, name: st.name,
+        message: working ? 'WAHA terhubung dan sesi berjalan.' : `Sesi WAHA berstatus ${st.status}. Pesan hanya terkirim bila statusnya WORKING.`,
+        warning: clash.length ? `Nomor ${clash.join(', ')} sama dengan akun pengirim WAHA. Pesan ke nomor sendiri tidak muncul sebagai notifikasi. Gunakan nomor admin yang berbeda.` : '',
+      });
+    } catch (e) {
+      res.json({ provider, ok: false, message: e.message });
+    }
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Kirim pesan uji ke semua nomor admin.
+admin.post('/wa/test', async (req, res, next) => {
+  try {
+    if (!allow('watest', 10, 10 * 60e3)) throw new HttpError(429, 'Terlalu sering mencoba. Tunggu beberapa menit.');
+    const s = getSettings();
+    const phones = adminPhones(s);
+    if (!phones.length) throw new HttpError(400, 'Belum ada nomor admin.');
+    const text = `Tes dari aplikasi ${s.property_name}: koneksi WhatsApp berfungsi. Pemberitahuan booking baru akan dikirim ke nomor ini.`;
+    const results = [];
+    for (const to of phones) {
+      try {
+        await sendRaw(to, text);
+        results.push({ phone: to, ok: true });
+      } catch (e) {
+        results.push({ phone: to, ok: false, error: e.message });
+      }
+    }
+    res.json({ results });
+  } catch (e) {
+    next(e);
+  }
+});
+
 admin.get('/messages', (req, res) => {
   const rows = db
     .prepare(
@@ -456,7 +543,7 @@ admin.get('/messages', (req, res) => {
        FROM messages m LEFT JOIN bookings b ON b.id = m.booking_id ORDER BY m.id DESC LIMIT 60`
     )
     .all();
-  res.json({ messages: rows, wa_provider: waProvider });
+  res.json({ messages: rows, wa_provider: getWaProvider() });
 });
 
 admin.post('/messages/:id/retry', async (req, res, next) => {
@@ -482,5 +569,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Guest house app berjalan di port ${PORT} (admin: ${ADMIN_PATH}, WA: ${waProvider})`);
+  console.log(`Guest house app berjalan di port ${PORT} (admin: ${ADMIN_PATH}, WA: ${getWaProvider()})`);
 });

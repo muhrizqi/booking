@@ -260,13 +260,46 @@
   });
 
   // ---------- Pengaturan ----------
-  const SETTING_IDS = ['admin_wa', 'payment_info', 'dp_percent', 'pending_hours', 'checkin_time', 'checkout_time', 'rules', 'property_name', 'address'];
+  const SETTING_IDS = ['admin_wa', 'wa_provider', 'waha_url', 'waha_session', 'payment_info', 'dp_percent', 'pending_hours', 'checkin_time', 'checkout_time', 'rules', 'property_name', 'address'];
+  const SECRET_IDS = ['waha_api_key', 'fonnte_token'];
 
   function waStateText() {
     return S.waProvider === 'none'
-      ? 'Pengiriman WhatsApp otomatis belum aktif (WA_PROVIDER belum diatur di server). Pesan tetap dicatat, dan Anda bisa mengirimnya lewat tombol WhatsApp.'
-      : `Pengiriman WhatsApp otomatis aktif lewat ${S.waProvider}.`;
+      ? 'Pengiriman WhatsApp otomatis belum aktif. Pesan tetap dicatat, dan Anda bisa mengirimnya lewat tombol WhatsApp. Atur penyedia di menu Pengaturan.'
+      : `Pengiriman WhatsApp otomatis aktif lewat ${S.waProvider.toUpperCase()}.`;
   }
+
+  function showWaFields() {
+    const p = $('#s-wa_provider').value;
+    $('#wa-waha').hidden = p !== 'waha';
+    $('#wa-fonnte').hidden = p !== 'fonnte';
+    $('#wa-check').disabled = p === 'none';
+    $('#wa-test').disabled = p === 'none';
+  }
+  $('#s-wa_provider').addEventListener('change', showWaFields);
+
+  function waResult(text, kind) {
+    const r = $('#wa-result');
+    r.textContent = text;
+    r.className = 'catatan' + (kind ? ' ' + kind : '');
+  }
+
+  $('#wa-check').addEventListener('click', async () => {
+    waResult('Memeriksa...');
+    try {
+      const d = await api('/wa/status');
+      waResult(d.message + (d.number ? `\nAkun pengirim: +${d.number}${d.name ? ' (' + d.name + ')' : ''}` : '') + (d.warning ? `\n${d.warning}` : ''), d.ok && !d.warning ? 'ok' : 'bad');
+    } catch (e) { waResult(e.message, 'bad'); }
+  });
+
+  $('#wa-test').addEventListener('click', async () => {
+    waResult('Mengirim pesan uji...');
+    try {
+      const d = await api('/wa/test', 'POST', {});
+      const lines = d.results.map((r) => (r.ok ? `+${r.phone}: terkirim` : `+${r.phone}: gagal, ${r.error}`));
+      waResult(lines.join('\n'), d.results.every((r) => r.ok) ? 'ok' : 'bad');
+    } catch (e) { waResult(e.message, 'bad'); }
+  });
 
   function unitBlock(u) {
     const f = (key, label, type = 'text', extra = {}) => el('div', { class: 'field' }, el('label', { for: `u${u.id}-${key}`, text: label }), el('input', { id: `u${u.id}-${key}`, type, value: u[key], ...extra }));
@@ -283,8 +316,13 @@
       const data = await api('/settings');
       S.settings = data.settings; S.units = data.units; S.waProvider = data.wa_provider;
       for (const k of SETTING_IDS) $('#s-' + k).value = data.settings[k] ?? '';
+      for (const k of SECRET_IDS) {
+        $('#s-' + k).value = '';
+        const sec = data.secrets?.[k];
+        $('#h-' + k).textContent = sec?.set ? `Sudah tersimpan (berakhir ...${sec.hint}). Kosongkan jika tidak ingin mengubah.` : 'Belum diisi.';
+      }
+      showWaFields();
       $('#units').replaceChildren(...data.units.map(unitBlock));
-      $('#wa-state').textContent = waStateText();
       $('#bar-name').textContent = data.settings.property_name;
     } catch (e) { toast(e.message, true); }
   }
@@ -293,6 +331,7 @@
     e.preventDefault();
     const settings = {};
     for (const k of SETTING_IDS) settings[k] = $('#s-' + k).value;
+    for (const k of SECRET_IDS) if ($('#s-' + k).value.trim()) settings[k] = $('#s-' + k).value.trim();
     const units = $$('.unit-block').map((blk) => {
       const id = Number(blk.dataset.unit);
       const g = (k) => $(`#u${id}-${k}`).value;
