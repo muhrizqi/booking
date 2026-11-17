@@ -65,13 +65,33 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL,
   sent_at    TEXT
 );
+-- Harga khusus per rentang tanggal (tanggal merah, Tahun Baru, hari raya, libur sekolah, dst).
+-- start_date dan end_date sama-sama termasuk (inklusif) dan merujuk ke tanggal MALAM menginap.
+CREATE TABLE IF NOT EXISTS rate_rules (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  unit_id    INTEGER NOT NULL REFERENCES units(id),
+  name       TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date   TEXT NOT NULL,
+  price      INTEGER NOT NULL,
+  min_nights INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_rules_range ON rate_rules(unit_id, start_date, end_date);
 `);
+
+// Migrasi ringan untuk database yang dibuat versi sebelumnya.
+if (!db.prepare('PRAGMA table_info(units)').all().some((c) => c.name === 'weekend_price')) {
+  // 0 berarti harga akhir pekan sama dengan harga hari biasa.
+  db.exec('ALTER TABLE units ADD COLUMN weekend_price INTEGER NOT NULL DEFAULT 0');
+}
 
 const DEFAULT_SETTINGS = {
   property_name: 'Guest House Masjid Jogokariyan',
   admin_wa: '081311351136',
   checkin_time: '14.00',
   checkout_time: '12.00',
+  weekend_days: '5,6', // malam yang memakai harga akhir pekan: 0=Min, 1=Sen, ..., 5=Jum, 6=Sab
   dp_percent: '50',
   pending_hours: '24',
   // Pengaturan WhatsApp. Nilai awal diambil dari environment variable lama (jika ada),

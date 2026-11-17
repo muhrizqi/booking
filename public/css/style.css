@@ -99,9 +99,15 @@ main.wrap > section { padding-block: 2rem 0.5rem; }
 .grid7 { display: grid; grid-template-columns: repeat(7, 1fr); }
 .dow { text-align: center; font-size: 0.78rem; color: var(--redam); padding: 0.3rem 0; }
 .day {
-  border: 0; background: transparent; margin: 1px; min-height: 46px; border-radius: 10px; cursor: pointer;
+  border: 0; background: transparent; margin: 1px; min-height: 52px; padding: 2px 0; border-radius: 10px; cursor: pointer;
   font-variant-numeric: tabular-nums; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; line-height: 1.1;
 }
+.day small.pr { font-size: 0.64rem; color: var(--redam); }
+.day small.hi { color: #8a5a00; font-weight: 700; }
+.day.sel-start small, .day.in-range small, .day.sel-end small { color: inherit; }
+.cal-note { font-size: 0.8rem; color: var(--redam); margin: 0.6rem 0 0; }
+.catatan.warn { color: var(--bata); font-weight: 600; }
 .day:hover:not([disabled]) { background: var(--hijau-muda); }
 .day.void { visibility: hidden; }
 .day.past { color: #a3b0aa; cursor: default; }

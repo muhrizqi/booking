@@ -32,6 +32,7 @@
       <nav class="wrap tabs" role="tablist" aria-label="Menu admin">
         <button role="tab" data-tab="booking" aria-selected="true">Booking <span class="count" id="n-pending" hidden></span></button>
         <button role="tab" data-tab="kalender" aria-selected="false">Kalender</button>
+        <button role="tab" data-tab="harga" aria-selected="false">Harga</button>
         <button role="tab" data-tab="pengaturan" aria-selected="false">Pengaturan</button>
         <button role="tab" data-tab="pesan" aria-selected="false">Pesan</button>
       </nav>
@@ -92,6 +93,41 @@
         </form>
       </section>
 
+      <section id="tab-harga" role="tabpanel" hidden>
+        <h2>Harga dasar</h2>
+        <form id="price-form" class="panel">
+          <div id="price-units"></div>
+          <div class="field">
+            <label id="l-weekend">Malam yang memakai harga akhir pekan</label>
+            <div class="dow-pick" id="weekend-days" role="group" aria-labelledby="l-weekend"></div>
+            <small>Dihitung per malam menginap. Biasanya Jumat dan Sabtu, sebab tamu yang menginap Jumat malam dan Sabtu malam baru pulang di hari berikutnya.</small>
+          </div>
+          <button class="btn" type="submit">Simpan harga dasar</button>
+        </form>
+
+        <h2>Harga khusus tanggal</h2>
+        <p class="catatan">Untuk tanggal merah, libur sekolah, Tahun Baru, dan hari raya. Harga ini menggantikan harga hari biasa dan akhir pekan pada tanggal tersebut. Bila dua aturan tumpang tindih, yang rentang tanggalnya lebih sempit yang dipakai, misalnya "Malam Tahun Baru" mengalahkan "Libur Natal dan Tahun Baru".</p>
+        <form id="rate-form" class="panel">
+          <div class="chips" id="rate-presets" aria-label="Nama cepat"></div>
+          <div class="field"><label for="r-name">Nama aturan</label><input id="r-name" maxlength="60" required placeholder="Misalnya: Tahun Baru"></div>
+          <div class="two">
+            <div class="field"><label for="r-start">Dari malam tanggal</label><input id="r-start" type="date" required></div>
+            <div class="field"><label for="r-end">Sampai malam tanggal</label><input id="r-end" type="date" required></div>
+          </div>
+          <p class="catatan" style="margin-top:-.4rem">Tanggal terakhir adalah malam terakhir yang memakai harga ini, bukan tanggal check-out.</p>
+          <div class="two">
+            <div class="field"><label for="r-price">Harga per malam (Rp)</label><input id="r-price" type="number" min="1" step="1000" inputmode="numeric" required></div>
+            <div class="field"><label for="r-min">Minimal menginap (malam)</label><input id="r-min" type="number" min="1" max="30" value="1" required></div>
+          </div>
+          <button class="btn" type="submit">Tambah aturan</button>
+        </form>
+        <div id="rates"></div>
+
+        <h2>Pratinjau 28 malam ke depan</h2>
+        <p class="catatan">Harga yang akan dilihat dan dibayar penyewa, sesuai pengaturan di atas.</p>
+        <div class="panel"><ul class="preview" id="price-preview"></ul></div>
+      </section>
+
       <section id="tab-pengaturan" role="tabpanel" hidden>
         <form id="settings-form">
           <h2>Nomor admin</h2>
@@ -143,7 +179,7 @@
             <div class="field"><label for="s-rules">Daftar aturan</label><textarea id="s-rules" rows="9"></textarea><small>Satu aturan per baris. Dikirim ke penyewa lewat WhatsApp saat booking diterima, dan tampil di halaman publik.</small></div>
           </div>
 
-          <h2>Rumah dan harga</h2>
+          <h2>Rumah dan kapasitas</h2>
           <div class="panel" id="units"></div>
 
           <h2>Lokasi dan nama</h2>

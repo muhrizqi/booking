@@ -61,11 +61,24 @@ Jika `WA_PROVIDER`, `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`, atau `FONNTE_TOK
 
 Dengan penyedia "belum aktif", pesan tidak dikirim otomatis tetapi tetap dicatat di menu **Pesan** dan bisa dikirim lewat tombol WhatsApp. Pesan yang gagal bisa dikirim ulang dari menu **Pesan**.
 
+## Harga
+
+Harga dihitung **per malam menginap**, dengan urutan prioritas:
+
+1. **Harga khusus tanggal** (menu Harga): nama, rentang tanggal, harga per malam, dan minimal menginap. Untuk tanggal merah, libur sekolah, Tahun Baru, Idul Fitri, Idul Adha, dan sejenisnya. Bila dua aturan tumpang tindih, aturan dengan rentang paling sempit yang dipakai (misalnya "Malam Tahun Baru" mengalahkan "Libur Natal dan Tahun Baru").
+2. **Harga akhir pekan**, untuk malam yang Anda pilih (bawaan Jumat dan Sabtu). Kosongkan bila sama dengan hari biasa.
+3. **Harga hari biasa**.
+
+Contoh: menginap Jumat sampai Senin berarti 3 malam: Jumat dan Sabtu memakai harga akhir pekan, Minggu memakai harga hari biasa, kecuali ada aturan khusus.
+
+Aturan "minimal menginap" berlaku bila ada satu malam dalam masa menginap yang tercakup aturan itu. Tamu yang melebihi kapasitas normal dikenai biaya tambahan per orang per malam (bila diisi). Perubahan harga tidak memengaruhi booking yang sudah dibuat, karena total dikunci saat booking dikirim. Tanggal merah tidak diisi otomatis; masukkan sendiri dari kalender resmi pemerintah setiap tahun.
+
 ## Panel admin
 
 - **Booking**: daftar menunggu, diterima, ditolak atau batal. Terima, tolak, atau batalkan dengan satu ketukan.
 - **Kalender**: lihat isi tiap malam, blokir tanggal (perbaikan, acara masjid), dan tambah booking manual untuk tamu dari WhatsApp, telepon, atau OTA.
-- **Pengaturan**: nomor WhatsApp admin dan koneksi WAHA, rekening DP, persentase DP, jam check-in dan check-out, daftar aturan, harga, kapasitas, biaya tamu tambahan, dan isi rumah.
+- **Harga**: harga hari biasa, harga akhir pekan, harga khusus tanggal (tanggal merah, Tahun Baru, hari raya, libur sekolah), dan pratinjau 28 malam ke depan. Lihat bagian "Harga" di bawah.
+- **Pengaturan**: nomor WhatsApp admin dan koneksi WAHA, rekening DP, persentase DP, jam check-in dan check-out, daftar aturan, kapasitas, dan isi rumah.
 - **Pesan**: log semua pesan WhatsApp.
 
 Alamat panel bisa diganti dengan `ADMIN_PATH`, misalnya `/atur`.

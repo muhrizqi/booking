@@ -77,6 +77,7 @@
     $$('main > section').forEach((s) => { s.hidden = s.id !== 'tab-' + name; });
     if (name === 'booking') renderBookings();
     if (name === 'kalender') { renderCal(); renderDay(); renderBlocks(); }
+    if (name === 'harga') loadPricing();
     if (name === 'pengaturan') loadSettings();
     if (name === 'pesan') loadMessages();
   }
@@ -305,7 +306,7 @@
     const f = (key, label, type = 'text', extra = {}) => el('div', { class: 'field' }, el('label', { for: `u${u.id}-${key}`, text: label }), el('input', { id: `u${u.id}-${key}`, type, value: u[key], ...extra }));
     return el('div', { class: 'unit-block', 'data-unit': String(u.id) },
       f('name', 'Nama unit'),
-      el('div', { class: 'two' }, f('price', 'Harga per malam (Rp)', 'number', { min: 0, step: 1000 }), f('extra_fee', 'Biaya tamu tambahan (Rp per orang per malam)', 'number', { min: 0, step: 1000 })),
+      el('p', { class: 'catatan', text: 'Harga diatur di menu Harga.' }),
       el('div', { class: 'two' }, f('base_capacity', 'Kapasitas normal (orang)', 'number', { min: 1 }), f('max_capacity', 'Kapasitas maksimal (orang)', 'number', { min: 1 })),
       el('div', { class: 'field' }, el('label', { for: `u${u.id}-description`, text: 'Isi rumah' }), el('textarea', { id: `u${u.id}-description`, rows: 10, text: u.description }), el('small', { text: 'Satu baris satu item. Baris yang diawali "# " menjadi judul lantai.' }))
     );
@@ -335,12 +336,89 @@
     const units = $$('.unit-block').map((blk) => {
       const id = Number(blk.dataset.unit);
       const g = (k) => $(`#u${id}-${k}`).value;
-      return { id, name: g('name'), price: g('price'), extra_fee: g('extra_fee'), base_capacity: g('base_capacity'), max_capacity: g('max_capacity'), description: g('description') };
+      return { id, name: g('name'), base_capacity: g('base_capacity'), max_capacity: g('max_capacity'), description: g('description') };
     });
     try {
       await api('/settings', 'PUT', { settings, units });
       toast('Pengaturan disimpan.');
       loadSettings();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // ---------- Harga ----------
+  const DOW_FULL = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const PRESETS = ['Tanggal merah', 'Libur sekolah', 'Libur Natal dan Tahun Baru', 'Malam Tahun Baru', 'Idul Fitri', 'Idul Adha'];
+
+  async function loadPricing() {
+    try {
+      S.pricing = await api('/pricing');
+      renderPricing();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  function renderPricing() {
+    const d = S.pricing;
+    $('#price-units').replaceChildren(...d.units.map((u) => {
+      const f = (key, label, hint) => el('div', { class: 'field' },
+        el('label', { for: `p${u.id}-${key}`, text: label }),
+        el('input', { id: `p${u.id}-${key}`, type: 'number', min: 0, step: 1000, inputmode: 'numeric', value: u[key] || '' }),
+        hint ? el('small', { text: hint }) : null);
+      return el('div', { class: 'unit-block', 'data-unit': String(u.id) },
+        d.units.length > 1 ? el('h3', { text: u.name }) : null,
+        el('div', { class: 'two' }, f('price', 'Harga hari biasa (Rp per malam)'), f('weekend_price', 'Harga akhir pekan (Rp per malam)', 'Kosongkan bila sama dengan hari biasa.')),
+        f('extra_fee', 'Biaya tamu tambahan (Rp per orang per malam)', 'Berlaku untuk tamu di atas kapasitas normal. Isi 0 bila ditentukan manual oleh admin.')
+      );
+    }));
+    $('#weekend-days').replaceChildren(...[1, 2, 3, 4, 5, 6, 0].map((n) => el('label', {},
+      el('input', { type: 'checkbox', value: String(n), checked: d.weekend_days.includes(n) }), DOW_FULL[n])));
+    $('#rate-presets').replaceChildren(...PRESETS.map((p) => el('button', { type: 'button', text: p, 'aria-pressed': 'false', onclick: () => { $('#r-name').value = p; $('#r-start').focus(); } })));
+
+    const box = $('#rates');
+    box.replaceChildren(...d.rules.map((r) => el('div', { class: 'card' },
+      el('div', { class: 'card-top' },
+        el('strong', { text: r.name }),
+        el('button', { type: 'button', class: 'btn danger', text: 'Hapus', onclick: async () => {
+          if (!confirm(`Hapus aturan "${r.name}"? Tanggalnya kembali memakai harga hari biasa atau akhir pekan.`)) return;
+          try { await api(`/rates/${r.id}`, 'DELETE'); toast('Aturan dihapus.'); loadPricing(); } catch (e) { toast(e.message, true); }
+        } })
+      ),
+      el('p', { class: 'meta', text: r.start_date === r.end_date ? `Malam ${fmt(r.start_date)}` : `Malam ${fmt(r.start_date)} sampai ${fmt(r.end_date)}` }),
+      el('p', { class: 'money' }, el('strong', { text: `${rupiah(r.price)} per malam` }), r.min_nights > 1 ? `, minimal ${r.min_nights} malam` : '')
+    )));
+    if (!d.rules.length) box.replaceChildren(el('p', { class: 'empty', text: 'Belum ada harga khusus. Tambahkan untuk tanggal merah, Tahun Baru, atau hari raya.' }));
+
+    const base = d.units[0]?.price;
+    $('#price-preview').replaceChildren(...d.preview.map((p) => el('li', { class: p.price !== base ? 'diff' : '' },
+      el('span', {}, fmt(p.date), el('small', { text: p.label })),
+      el('span', { text: rupiah(p.price) }))));
+  }
+
+  $('#price-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const units = $$('#price-units .unit-block').map((blk) => {
+      const id = Number(blk.dataset.unit);
+      const g = (k) => $(`#p${id}-${k}`).value;
+      return { id, price: g('price'), weekend_price: g('weekend_price'), extra_fee: g('extra_fee') };
+    });
+    const weekend_days = $$('#weekend-days input:checked').map((i) => Number(i.value));
+    try {
+      await api('/pricing', 'PUT', { units, weekend_days });
+      toast('Harga dasar disimpan.');
+      loadPricing();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  $('#rate-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/rates', 'POST', {
+        name: $('#r-name').value, start: $('#r-start').value, end: $('#r-end').value,
+        price: $('#r-price').value, min_nights: $('#r-min').value,
+      });
+      e.target.reset();
+      $('#r-min').value = 1;
+      toast('Aturan harga ditambahkan.');
+      loadPricing();
     } catch (err) { toast(err.message, true); }
   });
 

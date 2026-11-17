@@ -48,12 +48,15 @@
     $(sel).scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
   };
 
-  const S = { cfg: null, unit: null, avail: {}, ci: null, co: null, guests: 2, month: null, minMonth: null, maxMonth: null };
+  const shortPrice = (n) => (n >= 1e6 ? (Math.round(n / 1e5) / 10).toString().replace('.', ',') + 'jt' : Math.round(n / 1000) + 'rb');
+
+  const S = { cfg: null, unit: null, avail: {}, prices: {}, quote: null, ci: null, co: null, guests: 2, month: null, minMonth: null, maxMonth: null };
 
   // ---------- Muat data ----------
   async function loadAvailability() {
-    const { nights } = await api(`/api/availability?unit=${S.unit.id}&from=${S.cfg.today}&to=${addDays(S.cfg.today, 400)}`);
+    const { nights, prices } = await api(`/api/availability?unit=${S.unit.id}&from=${S.cfg.today}&to=${addDays(S.cfg.today, 400)}`);
     S.avail = nights;
+    S.prices = prices || {};
   }
 
   async function init() {
@@ -79,9 +82,12 @@
     document.title = cfg.name;
     $('#h-name').textContent = cfg.name;
     $('#foot-name').textContent = cfg.name;
+    const weekendDiff = unit.weekend_price > 0 && unit.weekend_price !== unit.price;
     $('#h-price').replaceChildren(
       el('strong', { text: rupiah(unit.price) }),
-      ` per malam untuk ${unit.base_capacity} orang`
+      ' per malam',
+      ...(weekendDiff ? [', akhir pekan ', el('strong', { text: rupiah(unit.weekend_price) })] : []),
+      ` untuk ${unit.base_capacity} orang. Harga tanggal tertentu tertera di kalender.`
     );
 
     const rooms = $('#rooms');
@@ -178,11 +184,13 @@
       // Tanggal terisi hanya bisa dipilih sebagai check-out.
       const asCheckout = S.ci && !S.co && d > S.ci && d <= limit;
       const disabled = past || (st && !asCheckout);
+      const price = !past && !st ? S.prices[d] : null;
+      if (price) label += `, ${rupiah(price)} per malam`;
       cells.push(el('button', {
-        type: 'button', class: cls.join(' '), text: String(day), disabled, 'aria-label': label,
+        type: 'button', class: cls.join(' '), disabled, 'aria-label': label,
         'aria-pressed': d === S.ci || d === S.co ? 'true' : 'false',
         onclick: () => pick(d),
-      }));
+      }, el('span', { text: String(day) }), price ? el('small', { class: 'pr' + (price !== S.unit.price ? ' hi' : ''), text: shortPrice(price) }) : null));
     }
     $('#cal').replaceChildren(...cells);
   }
@@ -222,20 +230,27 @@
   $('#next').addEventListener('click', () => { S.month = S.month.m === 11 ? { y: S.month.y + 1, m: 0 } : { y: S.month.y, m: S.month.m + 1 }; renderCal(); });
 
   // ---------- Form booking ----------
+  // Harga dasar per malam dihitung server (/api/quote); tambahan tamu dihitung di sini agar langsung berubah saat tombol +/- ditekan.
   function calc() {
-    const nights = diff(S.ci, S.co);
+    const q = S.quote;
     const u = S.unit;
     const extraGuests = Math.max(0, S.guests - u.base_capacity);
-    const base = nights * u.price;
-    const extra = extraGuests * u.extra_fee * nights;
-    const total = base + extra;
+    const extra = extraGuests * u.extra_fee * q.nights;
+    const total = q.base + extra;
     const dp = Math.min(total, Math.ceil((total * S.cfg.dp_percent) / 100 / 1000) * 1000);
-    return { nights, extraGuests, base, extra, total, dp };
+    return { nights: q.nights, extraGuests, base: q.base, extra, total, dp, lines: q.lines, minNights: q.minNights };
   }
 
   function renderBreakdown() {
     const c = calc();
-    const rows = [el('div', {}, el('dt', { text: `${c.nights} malam x ${rupiah(S.unit.price)}` }), el('dd', { text: rupiah(c.base) }))];
+    const short = c.nights < c.minNights;
+    $('#min-warn').hidden = !short;
+    $('#min-warn').textContent = short ? `Untuk tanggal ini, minimal menginap ${c.minNights} malam. Ubah tanggal check-out di kalender.` : '';
+    $('#submit').disabled = short;
+    const rows = c.lines.map((l) => el('div', {},
+      el('dt', { text: `${l.label}, ${l.nights} malam x ${rupiah(l.price)}` }),
+      el('dd', { text: rupiah(l.nights * l.price) })
+    ));
     if (c.extraGuests > 0) {
       rows.push(el('div', {}, el('dt', { text: `${c.extraGuests} tamu tambahan` }), el('dd', { text: S.unit.extra_fee > 0 ? rupiah(c.extra) : 'ditentukan admin' })));
     }
@@ -253,12 +268,21 @@
     $('#g-minus').disabled = S.guests <= 1;
   }
 
-  function openForm() {
+  async function openForm() {
+    const ci = S.ci, co = S.co;
+    try {
+      const d = await api(`/api/quote?unit=${S.unit.id}&from=${ci}&to=${co}&guests=${S.unit.base_capacity}`);
+      if (S.ci !== ci || S.co !== co) return; // tanggal sudah diganti selagi menunggu
+      S.quote = d.quote;
+    } catch (err) {
+      toast(err.message, true);
+      return;
+    }
     $('#pesan').hidden = false;
     $('#form').hidden = false;
     $('#done').hidden = true;
-    $('#s-in').textContent = fmt(S.ci);
-    $('#s-out').textContent = fmt(S.co);
+    $('#s-in').textContent = fmt(ci);
+    $('#s-out').textContent = fmt(co);
     $('#s-in-t').textContent = S.cfg.checkin_time;
     $('#s-out-t').textContent = S.cfg.checkout_time;
     S.guests = Math.min(Math.max(S.guests, 1), S.unit.max_capacity);

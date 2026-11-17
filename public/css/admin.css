@@ -46,6 +46,15 @@ body.admin h2 { margin-top: 1.75rem; }
 body.admin .day.past { cursor: pointer; }
 body.admin .day.booked, body.admin .day.blocked, body.admin .day.pending { cursor: pointer; }
 .msg-body { white-space: pre-wrap; font-size: 0.88rem; background: var(--kapur); border-radius: 8px; padding: 0.6rem 0.7rem; margin: 0.6rem 0 0; max-height: 9rem; overflow: auto; }
+.dow-pick { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.dow-pick label { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.85rem; border: 1px solid var(--garis); border-radius: 999px; background: #fff; font-weight: 400; cursor: pointer; margin: 0; }
+.dow-pick input { width: auto; margin: 0; accent-color: var(--hijau); }
+.preview { list-style: none; margin: 0; padding: 0; }
+.preview li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; border-bottom: 1px solid var(--garis); font-variant-numeric: tabular-nums; }
+.preview li:last-child { border-bottom: 0; }
+.preview li span:last-child { text-align: right; }
+.preview li.diff span:last-child { font-weight: 700; color: #8a5a00; }
+.preview small { color: var(--redam); display: block; }
 .btns-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
 .btns-row .btn { padding: 0.6rem 1rem; font-size: 0.95rem; }
 .field select { width: 100%; padding: 0.7rem 0.8rem; border: 1px solid #b4c3ba; border-radius: 10px; background: #fff; }

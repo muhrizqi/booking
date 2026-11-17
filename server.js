@@ -7,6 +7,7 @@ import { queueMessage, deliver, getWaProvider, sendRaw, wahaStatus } from './src
 import {
   HttpError, allow, todayStr, isDate, addDays, diffDays, normalizePhone, makeCode,
 } from './src/util.js';
+import { quote, assertMinNights, priceMap, nightlyPrices, parseWeekendDays } from './src/pricing.js';
 import { adminNewBookingMsg, guestToAdminMsg, guestMsg, ruleLines, mapsUrl } from './src/messages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -53,13 +54,6 @@ function getCookie(req, name) {
 
 // ---------- Helper domain ----------
 const baseUrl = (req) => (process.env.BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
-
-function priceFor(unit, nights, guests, s) {
-  const extraGuests = Math.max(0, guests - unit.base_capacity);
-  const total = nights * unit.price + extraGuests * unit.extra_fee * nights;
-  const dp = Math.min(total, Math.ceil((total * Number(s.dp_percent || 0)) / 100 / 1000) * 1000);
-  return { total, dp };
-}
 
 /** Daftar nomor admin (628xx) dari pengaturan: satu nomor per baris. */
 const adminPhones = (s) =>
@@ -186,10 +180,21 @@ app.get('/api/config', (req, res) => {
     pending_hours: Number(s.pending_hours),
     units: listUnits()
       .filter((u) => u.active)
-      .map(({ id, name, description, price, base_capacity, max_capacity, extra_fee }) => ({
-        id, name, description, price, base_capacity, max_capacity, extra_fee,
+      .map(({ id, name, description, price, weekend_price, base_capacity, max_capacity, extra_fee }) => ({
+        id, name, description, price, weekend_price, base_capacity, max_capacity, extra_fee,
       })),
   });
+});
+
+// Hitungan harga per malam untuk satu masa menginap (dipakai rincian di form booking).
+app.get('/api/quote', (req, res) => {
+  if (!allow('quote:' + req.ip, 120, 60e3)) throw new HttpError(429, 'Terlalu banyak permintaan.');
+  const s = getSettings();
+  const unit = getUnit(Number(req.query.unit) || listUnits()[0]?.id);
+  if (!unit || !unit.active) throw new HttpError(400, 'Unit tidak ditemukan.');
+  const guests = Math.max(1, Math.min(unit.max_capacity, Math.floor(Number(req.query.guests)) || unit.base_capacity));
+  const { nights } = validateStay({ check_in: req.query.from, check_out: req.query.to, guests }, unit, s);
+  res.json({ quote: quote(unit, req.query.from, req.query.to, guests, s), nights });
 });
 
 app.get('/api/availability', (req, res) => {
@@ -211,7 +216,8 @@ app.get('/api/availability', (req, res) => {
   const c = conflicts(unitId, from, to, s);
   for (const b of c.bookings) mark(b.check_in, b.check_out, b.status === 'approved' ? 'booked' : 'pending');
   for (const k of c.blocks) mark(k.start_date, k.end_date, 'blocked');
-  res.json({ unit_id: unitId, nights: out });
+  const unit = getUnit(unitId);
+  res.json({ unit_id: unitId, nights: out, prices: unit ? priceMap(unit, from, to, s) : {} });
 });
 
 app.post('/api/bookings', (req, res) => {
@@ -227,7 +233,9 @@ app.post('/api/bookings', (req, res) => {
   if (!phone) throw new HttpError(400, 'Nomor WhatsApp tidak valid. Contoh: 08123456789.');
   const { nights, guests } = validateStay(b, unit, s);
   const note = clean(b.note, 300);
-  const { total, dp } = priceFor(unit, nights, guests, s);
+  const q = quote(unit, b.check_in, b.check_out, guests, s);
+  assertMinNights(q);
+  const { total, dp } = q;
 
   const booking = tx(() => {
     const open = db
@@ -331,7 +339,7 @@ admin.post('/bookings', (req, res) => {
   const phone = b.phone ? normalizePhone(b.phone) : null;
   if (b.phone && !phone) throw new HttpError(400, 'Nomor WhatsApp tidak valid.');
   const { nights, guests } = validateStay(b, unit, s);
-  const calc = priceFor(unit, nights, guests, s);
+  const calc = quote(unit, b.check_in, b.check_out, guests, s);
   const total = Number.isFinite(Number(b.total)) && b.total !== '' && b.total != null ? Math.max(0, Math.round(Number(b.total))) : calc.total;
   const booking = tx(() => {
     if (conflicts(unit.id, b.check_in, b.check_out, s).any)
@@ -473,18 +481,89 @@ admin.put('/settings', (req, res) => {
   for (const u of units) {
     const row = getUnit(Number(u.id));
     if (!row) continue;
-    const price = Number(u.price), base = Number(u.base_capacity), max = Number(u.max_capacity), extra = Number(u.extra_fee);
-    if (![price, base, max, extra].every((n) => Number.isInteger(n) && n >= 0) || base < 1 || max < base || max > 100)
-      throw new HttpError(400, 'Harga dan kapasitas unit tidak valid.');
+    const base = Number(u.base_capacity), max = Number(u.max_capacity);
+    if (![base, max].every((n) => Number.isInteger(n) && n >= 0) || base < 1 || max < base || max > 100)
+      throw new HttpError(400, 'Kapasitas unit tidak valid.');
     const name = clean(u.name, 80);
     if (!name) throw new HttpError(400, 'Nama unit tidak boleh kosong.');
-    unitUpdates.push([name, String(u.description ?? '').replace(/\r/g, '').trim().slice(0, 1500), price, base, max, extra, row.id]);
+    unitUpdates.push([name, String(u.description ?? '').replace(/\r/g, '').trim().slice(0, 1500), base, max, row.id]);
   }
   tx(() => {
     for (const [k, v] of apply) setSetting(k, v);
     for (const args of unitUpdates)
-      db.prepare('UPDATE units SET name = ?, description = ?, price = ?, base_capacity = ?, max_capacity = ?, extra_fee = ? WHERE id = ?').run(...args);
+      db.prepare('UPDATE units SET name = ?, description = ?, base_capacity = ?, max_capacity = ? WHERE id = ?').run(...args);
   });
+  res.json({ ok: true });
+});
+
+// ----- Harga -----
+const rupiahInt = (v, label, { min = 0, max = 100_000_000 } = {}) => {
+  const n = Number(v);
+  if (v === '' || v == null || !Number.isInteger(n) || n < min || n > max)
+    throw new HttpError(400, `${label} harus berupa angka bulat (rupiah) antara ${min} dan ${max.toLocaleString('id-ID')}.`);
+  return n;
+};
+
+admin.get('/pricing', (req, res) => {
+  const s = getSettings();
+  const today = todayStr();
+  const units = listUnits();
+  const unit = units[0];
+  const to = addDays(today, 28);
+  res.json({
+    units: units.map(({ id, name, price, weekend_price, extra_fee }) => ({ id, name, price, weekend_price, extra_fee })),
+    weekend_days: [...parseWeekendDays(s.weekend_days)].sort(),
+    rules: db
+      .prepare('SELECT * FROM rate_rules WHERE end_date >= ? ORDER BY start_date, id')
+      .all(today),
+    preview: unit ? nightlyPrices(unit, today, to, s).map(({ date, price, label }) => ({ date, price, label })) : [],
+  });
+});
+
+admin.put('/pricing', (req, res) => {
+  const { units = [], weekend_days: days } = req.body || {};
+  const updates = [];
+  for (const u of units) {
+    const row = getUnit(Number(u.id));
+    if (!row) continue;
+    updates.push([
+      rupiahInt(u.price, 'Harga hari biasa', { min: 1 }),
+      rupiahInt(u.weekend_price === '' ? 0 : u.weekend_price, 'Harga akhir pekan'),
+      rupiahInt(u.extra_fee === '' ? 0 : u.extra_fee, 'Biaya tamu tambahan'),
+      row.id,
+    ]);
+  }
+  let weekend = null;
+  if (days !== undefined) {
+    const list = [...new Set((Array.isArray(days) ? days : []).map(Number))];
+    if (list.some((n) => !Number.isInteger(n) || n < 0 || n > 6)) throw new HttpError(400, 'Hari akhir pekan tidak valid.');
+    weekend = list.sort().join(',');
+  }
+  tx(() => {
+    for (const a of updates) db.prepare('UPDATE units SET price = ?, weekend_price = ?, extra_fee = ? WHERE id = ?').run(...a);
+    if (weekend !== null) setSetting('weekend_days', weekend);
+  });
+  res.json({ ok: true });
+});
+
+admin.post('/rates', (req, res) => {
+  const b = req.body || {};
+  const unit = getUnit(Number(b.unit_id) || listUnits()[0]?.id);
+  if (!unit) throw new HttpError(400, 'Unit tidak ditemukan.');
+  const name = clean(b.name, 60);
+  if (!name) throw new HttpError(400, 'Nama aturan wajib diisi, misalnya "Tahun Baru".');
+  if (!isDate(b.start) || !isDate(b.end) || b.end < b.start) throw new HttpError(400, 'Tanggal tidak valid.');
+  if (diffDays(b.start, b.end) > 366) throw new HttpError(400, 'Rentang tanggal terlalu panjang.');
+  const price = rupiahInt(b.price, 'Harga', { min: 1 });
+  const minNights = rupiahInt(b.min_nights === '' || b.min_nights == null ? 1 : b.min_nights, 'Minimal malam', { min: 1, max: 30 });
+  const r = db
+    .prepare('INSERT INTO rate_rules(unit_id, name, start_date, end_date, price, min_nights, created_at) VALUES(?,?,?,?,?,?,?)')
+    .run(unit.id, name, b.start, b.end, price, minNights, new Date().toISOString());
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+admin.delete('/rates/:id', (req, res) => {
+  db.prepare('DELETE FROM rate_rules WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
 });
 
