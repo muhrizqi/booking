@@ -5,7 +5,17 @@ import path from 'node:path';
 const dir = process.env.DATA_DIR || path.resolve('data');
 fs.mkdirSync(dir, { recursive: true });
 
-export const db = new DatabaseSync(path.join(dir, 'guesthouse.db'));
+// Di produksi (Docker), folder data harus berada di volume terpisah dari lapisan container;
+// kalau tidak, database hilang setiap redeploy. Perbedaan device dengan "/" menandakan ada volume yang dipasang.
+export const dbInfo = (() => {
+  let persistent = true;
+  if (process.env.NODE_ENV === 'production') {
+    try { persistent = fs.statSync(dir).dev !== fs.statSync('/').dev; } catch { persistent = true; }
+  }
+  return { file: path.join(dir, 'guesthouse.db'), persistent };
+})();
+
+export const db = new DatabaseSync(dbInfo.file);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
 // Skema sudah siap multi-unit: semua booking & blokir terikat ke unit_id.

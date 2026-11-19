@@ -1,5 +1,6 @@
 body.admin main.wrap > section { padding-block: 1.25rem 2rem; }
 body.admin h2 { margin-top: 1.75rem; }
+.warn-bar { background: var(--bata); color: #fff; padding: 0.7rem 1rem; text-align: center; font-weight: 600; font-size: 0.92rem; }
 .login { padding-top: 15vh; }
 .login h1 { font-size: 2rem; margin-bottom: 0.4rem; }
 

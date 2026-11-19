@@ -456,6 +456,9 @@
     try {
       const sess = await api('/session');
       S.waProvider = sess.wa_provider;
+      const warn = $('#storage-warn');
+      warn.hidden = sess.storage?.persistent !== false;
+      if (!warn.hidden) warn.textContent = `Peringatan: database (${sess.storage.file}) belum berada di Persistent Storage, jadi data booking hilang setiap redeploy. Samakan DATA_DIR dengan Destination Path volume di Coolify.`;
       $('#login').hidden = true;
       $('#app').hidden = false;
       await loadBookings();

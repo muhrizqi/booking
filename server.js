@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getSettings, setSetting, listUnits, getUnit, tx } from './src/db.js';
+import { db, dbInfo, getSettings, setSetting, listUnits, getUnit, tx } from './src/db.js';
 import { queueMessage, deliver, getWaProvider, sendRaw, wahaStatus } from './src/wa.js';
 import {
   HttpError, allow, todayStr, isDate, addDays, diffDays, normalizePhone, makeCode,
@@ -319,7 +319,9 @@ admin.use((req, res, next) => {
   next();
 });
 
-admin.get('/session', (req, res) => res.json({ ok: true, wa_provider: getWaProvider() }));
+admin.get('/session', (req, res) =>
+  res.json({ ok: true, wa_provider: getWaProvider(), storage: { persistent: dbInfo.persistent, file: dbInfo.file } })
+);
 
 admin.get('/bookings', (req, res) => {
   const s = getSettings();
@@ -649,4 +651,12 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Guest house app berjalan di port ${PORT} (admin: ${ADMIN_PATH}, WA: ${getWaProvider()})`);
+  console.log(`Database: ${dbInfo.file}`);
+  if (!dbInfo.persistent) {
+    console.warn('==================================================================');
+    console.warn(' PERINGATAN: folder database BUKAN volume persisten.');
+    console.warn(' Data booking akan HILANG setiap redeploy.');
+    console.warn(` Samakan DATA_DIR dengan Destination Path volume di Coolify (sekarang: ${path.dirname(dbInfo.file)}).`);
+    console.warn('==================================================================');
+  }
 });
