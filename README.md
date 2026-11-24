@@ -73,6 +73,17 @@ Contoh: menginap Jumat sampai Senin berarti 3 malam: Jumat dan Sabtu memakai har
 
 Aturan "minimal menginap" berlaku bila ada satu malam dalam masa menginap yang tercakup aturan itu. Tamu yang melebihi kapasitas normal dikenai biaya tambahan per orang per malam (bila diisi). Perubahan harga tidak memengaruhi booking yang sudah dibuat, karena total dikunci saat booking dikirim. Tanggal merah tidak diisi otomatis; masukkan sendiri dari kalender resmi pemerintah setiap tahun.
 
+## Mode pemasar (tanpa harga)
+
+Untuk dipakai para pemasar, harga bisa disembunyikan: **Admin → Pengaturan → Tampilan harga**, hilangkan centang "Tampilkan harga di halaman publik".
+
+- Kalender dan hero tidak lagi menampilkan harga. Server juga tidak mengirim harga ke browser.
+- Di form booking, harga total diisi sendiri (DP dihitung dari angka itu sesuai persen DP).
+- Pemasar wajib dipilih. Kelola daftar di **Admin → Pemasar**; tiap pemasar punya tautan pribadi `/?p=kode` yang mengunci namanya.
+- Nama pemasar tampil di bawah tanggal yang sudah terboking; ketuk tanggalnya untuk melihat keterangan.
+- Pemasar yang sudah punya booking tidak bisa dihapus (nonaktifkan saja). Mengganti nama ikut memperbarui riwayat.
+- Menyalakan kembali tampilan harga mengembalikan perilaku semula.
+
 ## Panel admin
 
 - **Booking**: daftar menunggu, diterima, ditolak atau batal. Terima, tolak, atau batalkan dengan satu ketukan.

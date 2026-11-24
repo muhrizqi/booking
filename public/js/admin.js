@@ -13,6 +13,7 @@
   const parse = (s) => new Date(s + 'T00:00:00Z');
   const fmt = (s) => { const d = parse(s); return `${DAYS[d.getUTCDay()]}, ${d.getUTCDate()} ${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
   const when = (iso) => new Date(iso).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const shortName = (n) => { const w = String(n).trim().split(/\s+/)[0]; return w.length > 7 ? w.slice(0, 6) + '…' : w; };
   const todayWIB = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(new Date());
 
   function el(tag, props = {}, ...kids) {
@@ -77,6 +78,7 @@
     $$('main > section').forEach((s) => { s.hidden = s.id !== 'tab-' + name; });
     if (name === 'booking') renderBookings();
     if (name === 'kalender') { renderCal(); renderDay(); renderBlocks(); }
+    if (name === 'pemasar') loadMarketers();
     if (name === 'harga') loadPricing();
     if (name === 'pengaturan') loadSettings();
     if (name === 'pesan') loadMessages();
@@ -139,6 +141,7 @@
         el('span', {}, el('span', { class: `chip ${b.status}`, text: STATUS_LABEL[b.status] }), b.expired ? el('span', { class: 'badge', text: 'lewat batas tahan' }) : null, b.source === 'manual' ? el('span', { class: 'badge', text: 'manual' }) : null)
       ),
       el('p', { class: 'who', text: b.name }),
+      b.marketer_name ? el('p', { class: 'meta' }, 'Pemasar: ', el('strong', { text: b.marketer_name })) : null,
       el('p', { class: 'meta' }, b.phone ? el('a', { href: `https://wa.me/${b.phone}`, target: '_blank', rel: 'noopener', text: `+${b.phone}` }) : 'Tanpa nomor', ` , masuk ${when(b.created_at)}`),
       el('p', { class: 'money' }, `${fmt(b.check_in)} sampai ${fmt(b.check_out)}`, el('br'), `${b.nights} malam, ${b.guests} orang`, el('br'), `Total ${rupiah(b.total)}`, b.dp_amount ? `, DP ${rupiah(b.dp_amount)}` : ''),
       b.note ? el('p', { class: 'note', text: b.note }) : null,
@@ -177,8 +180,9 @@
       }
     };
     for (const b of S.bookings) {
-      if (b.status === 'approved') put(b.check_in, b.check_out, 'booked', { text: `${b.name} (${b.code}), ${b.guests} orang` });
-      else if (b.status === 'pending' && !b.expired) put(b.check_in, b.check_out, 'pending', { text: `${b.name} (${b.code}) menunggu DP` });
+      const by = b.marketer_name ? `, pemasar ${b.marketer_name}` : '';
+      if (b.status === 'approved') put(b.check_in, b.check_out, 'booked', { text: `${b.name} (${b.code}), ${b.guests} orang${by}`, who: b.marketer_name });
+      else if (b.status === 'pending' && !b.expired) put(b.check_in, b.check_out, 'pending', { text: `${b.name} (${b.code}) menunggu DP${by}`, who: b.marketer_name });
     }
     for (const k of S.blocks) put(k.start_date, k.end_date, 'blocked', { text: `Diblokir${k.note ? ': ' + k.note : ''}` });
     return map;
@@ -204,7 +208,10 @@
       if (d < today) cls.push('past');
       if (d === today) cls.push('today');
       if (d === S.day) cls.push('sel-start');
-      cells.push(el('button', { type: 'button', class: cls.join(' '), text: String(day), 'aria-label': fmt(d), onclick: () => { S.day = d; renderCal(); renderDay(); } }));
+      const who = (items.find((i) => i.st === 'booked' && i.who) || items.find((i) => i.st === 'pending' && i.who))?.who;
+      cells.push(el('button', { type: 'button', class: cls.join(' ') + (who ? ' named' : ''), 'aria-label': fmt(d), onclick: () => { S.day = d; renderCal(); renderDay(); } },
+        el('span', { text: String(day) }),
+        who ? el('small', { class: 'who', text: shortName(who) }) : null));
     }
     $('#cal').replaceChildren(...cells);
   }
@@ -252,6 +259,7 @@
       await api('/bookings', 'POST', {
         name: $('#m-name').value, phone: $('#m-phone').value, check_in: $('#m-in').value, check_out: $('#m-out').value,
         guests: Number($('#m-guests').value), total: $('#m-total').value, note: $('#m-note').value,
+        marketer_id: $('#m-marketer').value || undefined,
       });
       e.target.reset();
       $('#m-guests').value = 2;
@@ -317,6 +325,7 @@
       const data = await api('/settings');
       S.settings = data.settings; S.units = data.units; S.waProvider = data.wa_provider;
       for (const k of SETTING_IDS) $('#s-' + k).value = data.settings[k] ?? '';
+      $('#s-show_prices').checked = data.settings.show_prices !== '0';
       for (const k of SECRET_IDS) {
         $('#s-' + k).value = '';
         const sec = data.secrets?.[k];
@@ -332,6 +341,7 @@
     e.preventDefault();
     const settings = {};
     for (const k of SETTING_IDS) settings[k] = $('#s-' + k).value;
+    settings.show_prices = $('#s-show_prices').checked;
     for (const k of SECRET_IDS) if ($('#s-' + k).value.trim()) settings[k] = $('#s-' + k).value.trim();
     const units = $$('.unit-block').map((blk) => {
       const id = Number(blk.dataset.unit);
@@ -342,6 +352,65 @@
       await api('/settings', 'PUT', { settings, units });
       toast('Pengaturan disimpan.');
       loadSettings();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // ---------- Pemasar ----------
+  async function loadMarketers() {
+    const { marketers } = await api('/marketers');
+    S.marketers = marketers;
+    // Pilihan pemasar di form booking manual (hanya yang aktif).
+    $('#m-marketer').replaceChildren(el('option', { value: '', text: 'Tanpa pemasar' }),
+      ...marketers.filter((m) => m.active).map((m) => el('option', { value: String(m.id), text: m.name })));
+    renderMarketers();
+  }
+
+  async function copyText(text, input) {
+    try { await navigator.clipboard.writeText(text); toast('Tautan disalin.'); }
+    catch { input.select(); toast('Tekan dan tahan untuk menyalin tautan.'); }
+  }
+
+  function renderMarketers() {
+    const box = $('#mk-list');
+    if (!S.marketers.length) { box.replaceChildren(el('p', { class: 'empty', text: 'Belum ada pemasar. Tambahkan nama pemasar di atas.' })); return; }
+    box.replaceChildren(...S.marketers.map((m) => {
+      const linkInput = el('input', { class: 'mk-input', readonly: true, value: m.link, 'aria-label': `Tautan ${m.name}` });
+      return el('article', { class: 'card' },
+        el('div', { class: 'card-top' },
+          el('strong', { text: m.name }),
+          el('span', {}, m.active ? el('span', { class: 'chip approved', text: 'Aktif' }) : el('span', { class: 'chip cancelled', text: 'Nonaktif' }))
+        ),
+        el('p', { class: 'meta', text: [m.phone ? `+${m.phone}` : 'Tanpa nomor', m.note].filter(Boolean).join(', ') }),
+        el('p', { class: 'money', text: `${m.bookings} booking, ${m.approved} diterima` }),
+        el('div', { class: 'mk-link' }, linkInput, el('button', { type: 'button', class: 'btn line', text: 'Salin', onclick: () => copyText(m.link, linkInput) })),
+        el('div', { class: 'btns' },
+          el('button', { type: 'button', class: 'btn line', text: 'Ubah', onclick: async () => {
+            const name = prompt('Nama pemasar:', m.name);
+            if (name === null) return;
+            const phone = prompt('Nomor WhatsApp (boleh dikosongkan):', m.phone ? `0${m.phone.replace(/^62/, '')}` : '');
+            if (phone === null) return;
+            try { await api(`/marketers/${m.id}`, 'PUT', { name, phone }); toast('Data pemasar disimpan.'); await loadMarketers(); await loadBookings(); } catch (e) { toast(e.message, true); }
+          } }),
+          el('button', { type: 'button', class: 'btn line', text: m.active ? 'Nonaktifkan' : 'Aktifkan', onclick: async () => {
+            if (m.active && !confirm(`Nonaktifkan ${m.name}? Namanya hilang dari pilihan dan tautan pribadinya tidak berlaku. Riwayat booking tetap ada.`)) return;
+            try { await api(`/marketers/${m.id}`, 'PUT', { active: !m.active }); await loadMarketers(); } catch (e) { toast(e.message, true); }
+          } }),
+          m.bookings === 0 ? el('button', { type: 'button', class: 'btn danger', text: 'Hapus', onclick: async () => {
+            if (!confirm(`Hapus ${m.name}?`)) return;
+            try { await api(`/marketers/${m.id}`, 'DELETE'); toast('Pemasar dihapus.'); await loadMarketers(); } catch (e) { toast(e.message, true); }
+          } }) : null
+        )
+      );
+    }));
+  }
+
+  $('#mk-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/marketers', 'POST', { name: $('#mk-name').value, phone: $('#mk-phone').value, note: $('#mk-note').value });
+      e.target.reset();
+      toast('Pemasar ditambahkan.');
+      await loadMarketers();
     } catch (err) { toast(err.message, true); }
   });
 
@@ -358,6 +427,7 @@
 
   function renderPricing() {
     const d = S.pricing;
+    $('#price-hidden-note').hidden = d.show_prices !== false;
     $('#price-units').replaceChildren(...d.units.map((u) => {
       const f = (key, label, hint) => el('div', { class: 'field' },
         el('label', { for: `p${u.id}-${key}`, text: label }),
@@ -462,6 +532,7 @@
       $('#login').hidden = true;
       $('#app').hidden = false;
       await loadBookings();
+      loadMarketers().catch(() => {});
       const b = new URLSearchParams(location.search).get('b');
       if (b) { S.filter = 'all'; S.highlight = b; history.replaceState(null, '', location.pathname); }
       setTab('booking');

@@ -23,6 +23,7 @@ export function adminNewBookingMsg(b, s, adminUrl) {
     `*Booking baru* ${b.code}`,
     '',
     `Nama: ${b.name}`,
+    b.marketer_name ? `Pemasar: ${b.marketer_name}` : null,
     `WhatsApp: wa.me/${b.phone}`,
     `Check-in: ${fmtLong(b.check_in)}`,
     `Check-out: ${fmtLong(b.check_out)}`,
@@ -41,7 +42,7 @@ export function adminNewBookingMsg(b, s, adminUrl) {
 /** Pesan dari calon penyewa ke admin (dipakai tombol wa.me di halaman publik). */
 export function guestToAdminMsg(b, s) {
   return [
-    `Assalamu'alaikum, saya ${b.name}.`,
+    `Assalamu'alaikum, saya ${b.marketer_name ? `${b.marketer_name} (pemasar), atas nama tamu ${b.name}` : b.name}.`,
     `Saya sudah booking ${s.property_name} dengan kode ${b.code}:`,
     `${fmtLong(b.check_in)} sampai ${fmtLong(b.check_out)} (${b.nights} malam, ${b.guests} orang).`,
     `Total ${rupiah(b.total)}, DP ${rupiah(b.dp_amount)}. Mohon dicek, terima kasih.`,

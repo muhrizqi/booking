@@ -88,7 +88,22 @@ CREATE TABLE IF NOT EXISTS rate_rules (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_rules_range ON rate_rules(unit_id, start_date, end_date);
+-- Pemasar: pihak yang menjualkan guest house. Tiap pemasar punya kode untuk tautan pribadi (/?p=kode).
+CREATE TABLE IF NOT EXISTS marketers (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  phone      TEXT NOT NULL DEFAULT '',
+  note       TEXT NOT NULL DEFAULT '',
+  code       TEXT NOT NULL UNIQUE,
+  active     INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
 `);
+
+// Booking mencatat pemasarnya (id dan salinan nama, supaya riwayat tetap terbaca).
+const bookingCols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name);
+if (!bookingCols.includes('marketer_id')) db.exec('ALTER TABLE bookings ADD COLUMN marketer_id INTEGER');
+if (!bookingCols.includes('marketer_name')) db.exec("ALTER TABLE bookings ADD COLUMN marketer_name TEXT NOT NULL DEFAULT ''");
 
 // Migrasi ringan untuk database yang dibuat versi sebelumnya.
 if (!db.prepare('PRAGMA table_info(units)').all().some((c) => c.name === 'weekend_price')) {
@@ -101,6 +116,7 @@ const DEFAULT_SETTINGS = {
   admin_wa: '081311351136',
   checkin_time: '14.00',
   checkout_time: '12.00',
+  show_prices: '1', // '0' = harga disembunyikan dari halaman publik; harga diisi manual saat booking
   weekend_days: '5,6', // malam yang memakai harga akhir pekan: 0=Min, 1=Sen, ..., 5=Jum, 6=Sab
   dp_percent: '50',
   pending_hours: '24',

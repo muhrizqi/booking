@@ -50,13 +50,17 @@
 
   const shortPrice = (n) => (n >= 1e6 ? (Math.round(n / 1e5) / 10).toString().replace('.', ',') + 'jt' : Math.round(n / 1000) + 'rb');
 
-  const S = { cfg: null, unit: null, avail: {}, prices: {}, quote: null, ci: null, co: null, guests: 2, month: null, minMonth: null, maxMonth: null };
+  // Nama pendek untuk ditulis di bawah angka tanggal (kata pertama, maksimal 7 huruf).
+  const shortName = (n) => { const w = String(n).trim().split(/\s+/)[0]; return w.length > 7 ? w.slice(0, 6) + '…' : w; };
+
+  const S = { cfg: null, unit: null, avail: {}, prices: {}, names: {}, marketer: null, quote: null, ci: null, co: null, guests: 2, month: null, minMonth: null, maxMonth: null };
 
   // ---------- Muat data ----------
   async function loadAvailability() {
-    const { nights, prices } = await api(`/api/availability?unit=${S.unit.id}&from=${S.cfg.today}&to=${addDays(S.cfg.today, 400)}`);
+    const { nights, prices, names } = await api(`/api/availability?unit=${S.unit.id}&from=${S.cfg.today}&to=${addDays(S.cfg.today, 400)}`);
     S.avail = nights;
     S.prices = prices || {};
+    S.names = names || {}; // nama pemasar per malam, hanya ada di mode tanpa harga
   }
 
   async function init() {
@@ -74,6 +78,36 @@
     renderHint();
     setupForm();
     setupStatus();
+    await setupMarketer();
+  }
+
+  // ---------- Pemasar ----------
+  // Dua cara: tautan pribadi (/?p=kode) yang mengunci pemasar, atau pilihan di form (mode tanpa harga).
+  async function setupMarketer() {
+    const code = new URLSearchParams(location.search).get('p');
+    if (code) {
+      try {
+        const { marketer } = await api(`/api/marketer/${encodeURIComponent(code)}`);
+        S.marketer = { ...marketer, code };
+      } catch {
+        toast('Tautan pemasar tidak dikenal. Hubungi admin untuk tautan yang benar.', true);
+      }
+    }
+    const field = $('#mk-field');
+    const sel = $('#f-marketer');
+    if (S.marketer) {
+      field.hidden = false;
+      sel.hidden = true;
+      $('#mk-fixed').hidden = false;
+      $('#mk-fixed').textContent = S.marketer.name;
+    } else if (S.cfg.marketers.length) {
+      field.hidden = false;
+      sel.replaceChildren(el('option', { value: '', text: 'Pilih pemasar' }), ...S.cfg.marketers.map((m) => el('option', { value: String(m.id), text: m.name })));
+      try {
+        const saved = localStorage.getItem('gh_marketer');
+        if (saved && S.cfg.marketers.some((m) => String(m.id) === saved)) sel.value = saved;
+      } catch { /* abaikan */ }
+    }
   }
 
   // ---------- Bagian statis ----------
@@ -82,13 +116,20 @@
     document.title = cfg.name;
     $('#h-name').textContent = cfg.name;
     $('#foot-name').textContent = cfg.name;
-    const weekendDiff = unit.weekend_price > 0 && unit.weekend_price !== unit.price;
-    $('#h-price').replaceChildren(
-      el('strong', { text: rupiah(unit.price) }),
-      ' per malam',
-      ...(weekendDiff ? [', akhir pekan ', el('strong', { text: rupiah(unit.weekend_price) })] : []),
-      ` untuk ${unit.base_capacity} orang. Harga tanggal tertentu tertera di kalender.`
-    );
+    if (cfg.show_prices) {
+      const weekendDiff = unit.weekend_price > 0 && unit.weekend_price !== unit.price;
+      $('#h-price').replaceChildren(
+        el('strong', { text: rupiah(unit.price) }),
+        ' per malam',
+        ...(weekendDiff ? [', akhir pekan ', el('strong', { text: rupiah(unit.weekend_price) })] : []),
+        ` untuk ${unit.base_capacity} orang. Harga tanggal tertentu tertera di kalender.`
+      );
+      $('#cal-note').textContent = 'Angka kecil di bawah tanggal adalah harga per malam (rb = ribu, jt = juta). Harga yang dicetak tebal berwarna emas berbeda dari hari biasa.';
+    } else {
+      const more = unit.max_capacity - unit.base_capacity;
+      $('#h-price').textContent = `Untuk ${unit.base_capacity} orang${more > 0 ? `, bisa ditambah sampai ${more} orang dengan extra bed` : ''}.`;
+      $('#cal-note').textContent = 'Nama di bawah tanggal adalah pemasar yang sudah mengambil tanggal itu. Ketuk tanggalnya untuk melihat keterangan.';
+    }
 
     const rooms = $('#rooms');
     let list = null;
@@ -183,16 +224,26 @@
       }
       // Tanggal terisi hanya bisa dipilih sebagai check-out.
       const asCheckout = S.ci && !S.co && d > S.ci && d <= limit;
-      const disabled = past || (st && !asCheckout);
-      const price = !past && !st ? S.prices[d] : null;
+      const price = S.cfg.show_prices && !past && !st ? S.prices[d] : null;
       if (price) label += `, ${rupiah(price)} per malam`;
+      // Mode tanpa harga: tanggal terboking menampilkan nama pemasar, dan bisa diketuk untuk melihat keterangannya.
+      const who = !past && (st === 'booked' || st === 'pending') ? S.names[d] : null;
+      const peekable = !!who && !asCheckout;
+      if (who) { label += `, pemasar ${who}`; cls.push('named'); }
+      const disabled = past || (st && !asCheckout && !peekable);
       cells.push(el('button', {
         type: 'button', class: cls.join(' '), disabled, 'aria-label': label,
         'aria-pressed': d === S.ci || d === S.co ? 'true' : 'false',
-        onclick: () => pick(d),
-      }, el('span', { text: String(day) }), price ? el('small', { class: 'pr' + (price !== S.unit.price ? ' hi' : ''), text: shortPrice(price) }) : null));
+        onclick: () => (peekable ? peek(d, st, who) : pick(d)),
+      }, el('span', { text: String(day) }),
+      price ? el('small', { class: 'pr' + (price !== S.unit.price ? ' hi' : ''), text: shortPrice(price) }) : null,
+      who ? el('small', { class: 'who', text: shortName(who) }) : null));
     }
     $('#cal').replaceChildren(...cells);
+  }
+
+  function peek(d, st, who) {
+    toast(`${fmt(d)}: ${st === 'booked' ? 'sudah terisi' : 'menunggu konfirmasi'}. Pemasar: ${who}.`);
   }
 
   function startAt(d) {
@@ -241,12 +292,46 @@
     return { nights: q.nights, extraGuests, base: q.base, extra, total, dp, lines: q.lines, minNights: q.minNights };
   }
 
-  function renderBreakdown() {
-    const c = calc();
-    const short = c.nights < c.minNights;
+  function renderGuestsUi() {
+    const extraGuests = Math.max(0, S.guests - S.unit.base_capacity);
+    $('#g-val').textContent = String(S.guests);
+    $('#g-note').textContent = extraGuests > 0
+      ? `${extraGuests} orang di atas kapasitas normal akan memakai extra bed di luar kamar atau di ruang pertemuan.`
+      : `Kapasitas normal sampai ${S.unit.base_capacity} orang.`;
+    $('#g-plus').disabled = S.guests >= S.unit.max_capacity;
+    $('#g-minus').disabled = S.guests <= 1;
+    return extraGuests;
+  }
+
+  function renderMinNights(nights, minNights) {
+    const short = nights < minNights;
     $('#min-warn').hidden = !short;
-    $('#min-warn').textContent = short ? `Untuk tanggal ini, minimal menginap ${c.minNights} malam. Ubah tanggal check-out di kalender.` : '';
+    $('#min-warn').textContent = short ? `Untuk tanggal ini, minimal menginap ${minNights} malam. Ubah tanggal check-out di kalender.` : '';
     $('#submit').disabled = short;
+  }
+
+  // Mode tanpa harga: tidak ada hitungan harga, pemesan mengisi sendiri harga total yang disepakati.
+  function updateManualDp() {
+    const total = Math.round(Number($('#f-total').value));
+    $('#dp-note').textContent = total > 0
+      ? `DP ${S.cfg.dp_percent}%: ${rupiah(Math.min(total, Math.ceil((total * S.cfg.dp_percent) / 100 / 1000) * 1000))}. Booking dikonfirmasi setelah DP diterima admin.`
+      : 'Isi harga total yang disepakati dengan tamu. DP dihitung otomatis dari harga itu.';
+  }
+
+  function renderManual() {
+    renderGuestsUi();
+    renderMinNights(S.quote.nights, S.quote.minNights);
+    $('#rincian').hidden = true;
+    $('#manual-field').hidden = false;
+    updateManualDp();
+  }
+
+  function renderBreakdown() {
+    if (!S.cfg.show_prices) { renderManual(); return; }
+    $('#rincian').hidden = false;
+    $('#manual-field').hidden = true;
+    const c = calc();
+    renderMinNights(c.nights, c.minNights);
     const rows = c.lines.map((l) => el('div', {},
       el('dt', { text: `${l.label}, ${l.nights} malam x ${rupiah(l.price)}` }),
       el('dd', { text: rupiah(l.nights * l.price) })
@@ -260,12 +345,7 @@
     $('#dp-note').textContent = c.extraGuests > 0 && S.unit.extra_fee === 0
       ? 'Total belum termasuk biaya tamu tambahan. Admin akan mengonfirmasi biayanya lewat WhatsApp.'
       : 'Booking dikonfirmasi setelah DP diterima admin.';
-    $('#g-val').textContent = String(S.guests);
-    $('#g-note').textContent = c.extraGuests > 0
-      ? `${c.extraGuests} orang di atas kapasitas normal akan memakai extra bed di luar kamar atau di ruang pertemuan.`
-      : `Kapasitas normal sampai ${S.unit.base_capacity} orang.`;
-    $('#g-plus').disabled = S.guests >= S.unit.max_capacity;
-    $('#g-minus').disabled = S.guests <= 1;
+    renderGuestsUi();
   }
 
   async function openForm() {
@@ -293,9 +373,13 @@
   function setupForm() {
     $('#g-plus').addEventListener('click', () => { if (S.guests < S.unit.max_capacity) { S.guests++; renderBreakdown(); } });
     $('#g-minus').addEventListener('click', () => { if (S.guests > 1) { S.guests--; renderBreakdown(); } });
+    $('#f-total').addEventListener('input', updateManualDp);
     try {
-      $('#f-name').value = localStorage.getItem('gh_name') || '';
-      $('#f-phone').value = localStorage.getItem('gh_phone') || '';
+      // Di mode pemasar, nama dan nomor adalah milik tamu yang berbeda tiap booking, jadi tidak diisi otomatis.
+      if (S.cfg.show_prices) {
+        $('#f-name').value = localStorage.getItem('gh_name') || '';
+        $('#f-phone').value = localStorage.getItem('gh_phone') || '';
+      }
     } catch { /* penyimpanan dimatikan, abaikan */ }
 
     $('#form').addEventListener('submit', async (e) => {
@@ -304,6 +388,18 @@
       const phone = $('#f-phone').value.trim();
       if (name.length < 2) { toast('Isi nama lengkap.', true); $('#f-name').focus(); return; }
       if (!/^[+\d][\d\s-]{8,18}$/.test(phone)) { toast('Nomor WhatsApp belum benar. Contoh: 08123456789', true); $('#f-phone').focus(); return; }
+      const payload = {};
+      if (!S.cfg.show_prices) {
+        const total = Math.round(Number($('#f-total').value));
+        if (!(total > 0)) { toast('Isi harga total yang disepakati (Rp).', true); $('#f-total').focus(); return; }
+        payload.total = total;
+      }
+      if (S.marketer) payload.marketer_code = S.marketer.code;
+      else if (!$('#mk-field').hidden) {
+        if (!$('#f-marketer').value) { toast('Pilih pemasar.', true); $('#f-marketer').focus(); return; }
+        payload.marketer_id = Number($('#f-marketer').value);
+        try { localStorage.setItem('gh_marketer', $('#f-marketer').value); } catch { /* abaikan */ }
+      }
       const btn = $('#submit');
       btn.disabled = true;
       btn.textContent = 'Mengirim...';
@@ -313,13 +409,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             unit_id: S.unit.id, name, phone, check_in: S.ci, check_out: S.co, guests: S.guests,
-            note: $('#f-note').value.trim(), website: $('[name=website]', e.target).value,
+            note: $('#f-note').value.trim(), website: $('[name=website]', e.target).value, ...payload,
           }),
         });
         try {
-          localStorage.setItem('gh_name', name); localStorage.setItem('gh_phone', phone);
+          if (S.cfg.show_prices) { localStorage.setItem('gh_name', name); localStorage.setItem('gh_phone', phone); }
           if (data.booking) localStorage.setItem('gh_code', data.booking.code);
         } catch { /* abaikan */ }
+        if (!S.cfg.show_prices) { $('#f-name').value = ''; $('#f-phone').value = ''; $('#f-total').value = ''; $('#f-note').value = ''; }
         if (data.booking) {
           $('#form').hidden = true;
           const done = $('#done');
@@ -362,6 +459,7 @@
     wrap.append(
       el('p', { style: 'margin-top:.8rem' },
         `${b.name}, ${b.nights} malam, ${b.guests} orang.`, el('br'),
+        ...(b.marketer ? [`Pemasar: ${b.marketer}`, el('br')] : []),
         `Check-in ${fmt(b.check_in)}`, el('br'),
         `Check-out ${fmt(b.check_out)}`, el('br'),
         `Total ${rupiah(b.total)}`

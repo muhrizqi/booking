@@ -33,6 +33,7 @@
       <nav class="wrap tabs" role="tablist" aria-label="Menu admin">
         <button role="tab" data-tab="booking" aria-selected="true">Booking <span class="count" id="n-pending" hidden></span></button>
         <button role="tab" data-tab="kalender" aria-selected="false">Kalender</button>
+        <button role="tab" data-tab="pemasar" aria-selected="false">Pemasar</button>
         <button role="tab" data-tab="harga" aria-selected="false">Harga</button>
         <button role="tab" data-tab="pengaturan" aria-selected="false">Pengaturan</button>
         <button role="tab" data-tab="pesan" aria-selected="false">Pesan</button>
@@ -89,12 +90,27 @@
             <div class="field"><label for="m-guests">Jumlah tamu</label><input id="m-guests" type="number" min="1" value="2" required></div>
             <div class="field"><label for="m-total">Total (kosongkan untuk hitung otomatis)</label><input id="m-total" type="number" min="0" step="1000"></div>
           </div>
+          <div class="field"><label for="m-marketer">Pemasar (opsional)</label><select id="m-marketer"></select></div>
           <div class="field"><label for="m-note">Catatan</label><input id="m-note" maxlength="300"></div>
           <button class="btn" type="submit">Simpan booking</button>
         </form>
       </section>
 
+      <section id="tab-pemasar" role="tabpanel" hidden>
+        <p class="catatan">Pemasar yang aktif menjadi pilihan di form booking saat harga disembunyikan. Tiap pemasar juga punya tautan pribadi yang otomatis mengisi namanya, jadi tidak perlu memilih lagi.</p>
+        <form id="mk-form" class="panel">
+          <div class="two">
+            <div class="field"><label for="mk-name">Nama pemasar</label><input id="mk-name" maxlength="60" required></div>
+            <div class="field"><label for="mk-phone">WhatsApp (opsional)</label><input id="mk-phone" type="tel" inputmode="tel" maxlength="20"></div>
+          </div>
+          <div class="field"><label for="mk-note">Catatan (opsional)</label><input id="mk-note" maxlength="200" placeholder="Misalnya: agen dari Jakarta"></div>
+          <button class="btn" type="submit">Tambah pemasar</button>
+        </form>
+        <div id="mk-list"></div>
+      </section>
+
       <section id="tab-harga" role="tabpanel" hidden>
+        <p class="catatan warn" id="price-hidden-note" hidden>Harga sedang disembunyikan dari halaman publik (diatur di Pengaturan). Harga di bawah ini tetap tersimpan, tetapi tidak dipakai untuk menghitung booking selama mode itu aktif.</p>
         <h2>Harga dasar</h2>
         <form id="price-form" class="panel">
           <div id="price-units"></div>
@@ -131,6 +147,14 @@
 
       <section id="tab-pengaturan" role="tabpanel" hidden>
         <form id="settings-form">
+          <h2>Tampilan harga</h2>
+          <div class="panel">
+            <div class="field">
+              <label class="check" for="s-show_prices"><input id="s-show_prices" type="checkbox"> Tampilkan harga di halaman publik</label>
+              <small>Bila dimatikan, harga per tanggal dan rincian harga disembunyikan. Pemesan mengisi sendiri harga total saat booking, wajib memilih pemasar, dan nama pemasar tampil di tanggal yang sudah terboking. Cocok bila aplikasi dipakai oleh pemasar.</small>
+            </div>
+          </div>
+
           <h2>Nomor admin</h2>
           <div class="panel">
             <div class="field"><label for="s-admin_wa">Nomor WhatsApp admin</label><textarea id="s-admin_wa" rows="3" inputmode="tel" placeholder="081234567890"></textarea><small>Satu nomor per baris, maksimal 5. Pemberitahuan booking baru dikirim ke semua nomor ini. Nomor pertama dipakai tombol WhatsApp di halaman publik.</small></div>

@@ -48,7 +48,7 @@
           <span><i class="l-booked"></i>Terisi</span>
           <span><i class="l-blocked"></i>Tidak tersedia</span>
         </div>
-        <p class="cal-note">Angka kecil di bawah tanggal adalah harga per malam (rb = ribu, jt = juta). Harga yang dicetak tebal berwarna emas berbeda dari hari biasa.</p>
+        <p class="cal-note" id="cal-note"></p>
       </div>
     </section>
 
@@ -69,6 +69,11 @@
             <input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="08123456789" maxlength="20" required>
             <small>Konfirmasi booking dikirim ke nomor ini.</small>
           </div>
+          <div class="field" id="mk-field" hidden>
+            <label for="f-marketer">Pemasar</label>
+            <select id="f-marketer"></select>
+            <p class="mk-fixed" id="mk-fixed" hidden></p>
+          </div>
           <div class="field">
             <label id="l-guests">Jumlah tamu</label>
             <div class="stepper" role="group" aria-labelledby="l-guests">
@@ -83,6 +88,11 @@
             <textarea id="f-note" name="note" maxlength="300" placeholder="Misalnya: rombongan keluarga, tiba malam hari"></textarea>
           </div>
           <div class="hp" aria-hidden="true"><label>Website <input name="website" tabindex="-1" autocomplete="off"></label></div>
+          <div class="field" id="manual-field" hidden>
+            <label for="f-total">Harga total yang disepakati (Rp)</label>
+            <input id="f-total" type="number" inputmode="numeric" min="1" step="1000" placeholder="Misalnya 1500000">
+            <small>Isi sesuai harga dengan tamu untuk seluruh masa menginap.</small>
+          </div>
           <dl class="rincian" id="rincian"></dl>
           <p class="catatan" id="dp-note"></p>
           <p class="catatan warn" id="min-warn" hidden></p>

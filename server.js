@@ -68,7 +68,7 @@ const pendingCutoff = (s) => new Date(Date.now() - Number(s.pending_hours || 24)
 function conflicts(unitId, from, to, s, { pending = true, excludeId = null } = {}) {
   const bookings = db
     .prepare(
-      `SELECT id, check_in, check_out, status FROM bookings
+      `SELECT id, check_in, check_out, status, marketer_name FROM bookings
        WHERE unit_id = ? AND check_in < ? AND check_out > ? AND id != ?
          AND (status = 'approved' OR (? = 1 AND status = 'pending' AND created_at > ?))`
     )
@@ -95,19 +95,45 @@ function validateStay(b, unit, s) {
 
 const clean = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
-function insertBooking({ unit, name, phone, check_in, check_out, nights, guests, note, total, dp, status, source }) {
+const showPrices = (s) => s.show_prices !== '0';
+const dpFor = (total, s) => Math.min(total, Math.ceil((total * Number(s.dp_percent || 0)) / 100 / 1000) * 1000);
+
+/** Harga total yang diisi manual (saat harga disembunyikan). */
+function manualTotal(v) {
+  const n = Number(v);
+  if (v === '' || v == null || !Number.isInteger(n) || n < 1 || n > 100_000_000)
+    throw new HttpError(400, 'Isi harga total yang disepakati (Rp), berupa angka bulat.');
+  return n;
+}
+
+/**
+ * Cari pemasar dari id atau kode tautan pribadi. Wajib diisi bila harga disembunyikan dan sudah ada pemasar aktif.
+ * Mengembalikan { id, name } atau null.
+ */
+function resolveMarketer(b, s, { required = true } = {}) {
+  let row = null;
+  if (b.marketer_code) row = db.prepare('SELECT * FROM marketers WHERE code = ? AND active = 1').get(String(b.marketer_code).toLowerCase());
+  else if (b.marketer_id) row = db.prepare('SELECT * FROM marketers WHERE id = ? AND active = 1').get(Number(b.marketer_id));
+  if ((b.marketer_code || b.marketer_id) && !row) throw new HttpError(400, 'Pemasar tidak ditemukan atau sudah dinonaktifkan.');
+  if (!row && required && !showPrices(s) && db.prepare('SELECT 1 FROM marketers WHERE active = 1').get())
+    throw new HttpError(400, 'Pilih pemasar.');
+  return row ? { id: row.id, name: row.name } : null;
+}
+
+function insertBooking({ unit, name, phone, check_in, check_out, nights, guests, note, total, dp, status, source, marketer = null }) {
   for (let i = 0; i < 5; i++) {
     const code = makeCode();
     if (db.prepare('SELECT 1 FROM bookings WHERE code = ?').get(code)) continue;
     const r = db
       .prepare(
         `INSERT INTO bookings(code, unit_id, name, phone, check_in, check_out, nights, guests, note,
-                              total, dp_amount, status, source, created_at, decided_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                              total, dp_amount, status, source, created_at, decided_at, marketer_id, marketer_name)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       )
       .run(
         code, unit.id, name, phone, check_in, check_out, nights, guests, note, total, dp, status, source,
-        new Date().toISOString(), status === 'approved' ? new Date().toISOString() : null
+        new Date().toISOString(), status === 'approved' ? new Date().toISOString() : null,
+        marketer?.id ?? null, marketer?.name ?? ''
       );
     return db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid);
   }
@@ -121,6 +147,7 @@ function publicBooking(b, s, { withPayment = false } = {}) {
     code: b.code,
     status: b.status,
     name: b.name.split(' ')[0],
+    marketer: b.marketer_name || '',
     check_in: b.check_in,
     check_out: b.check_out,
     nights: b.nights,
@@ -166,7 +193,11 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 // ----- Publik -----
 app.get('/api/config', (req, res) => {
   const s = getSettings();
+  const showP = showPrices(s);
   res.json({
+    show_prices: showP,
+    // Pemasar hanya ditampilkan di mode tanpa harga (mode untuk pemasar).
+    marketers: showP ? [] : db.prepare('SELECT id, name FROM marketers WHERE active = 1 ORDER BY name COLLATE NOCASE').all(),
     today: todayStr(),
     name: s.property_name,
     admin_wa: adminPhones(s)[0] || null,
@@ -181,9 +212,19 @@ app.get('/api/config', (req, res) => {
     units: listUnits()
       .filter((u) => u.active)
       .map(({ id, name, description, price, weekend_price, base_capacity, max_capacity, extra_fee }) => ({
-        id, name, description, price, weekend_price, base_capacity, max_capacity, extra_fee,
+        id, name, description, base_capacity, max_capacity,
+        // Saat harga disembunyikan, angka harga tidak boleh keluar dari server.
+        ...(showP ? { price, weekend_price, extra_fee } : {}),
       })),
   });
+});
+
+// Data pemasar dari tautan pribadi (/?p=kode).
+app.get('/api/marketer/:code', (req, res) => {
+  if (!allow('mk:' + req.ip, 60, 60e3)) throw new HttpError(429, 'Terlalu banyak permintaan.');
+  const row = db.prepare('SELECT id, name FROM marketers WHERE code = ? AND active = 1').get(String(req.params.code).toLowerCase());
+  if (!row) throw new HttpError(404, 'Tautan pemasar tidak dikenal.');
+  res.json({ marketer: row });
 });
 
 // Hitungan harga per malam untuk satu masa menginap (dipakai rincian di form booking).
@@ -194,7 +235,9 @@ app.get('/api/quote', (req, res) => {
   if (!unit || !unit.active) throw new HttpError(400, 'Unit tidak ditemukan.');
   const guests = Math.max(1, Math.min(unit.max_capacity, Math.floor(Number(req.query.guests)) || unit.base_capacity));
   const { nights } = validateStay({ check_in: req.query.from, check_out: req.query.to, guests }, unit, s);
-  res.json({ quote: quote(unit, req.query.from, req.query.to, guests, s), nights });
+  const q = quote(unit, req.query.from, req.query.to, guests, s);
+  // Saat harga disembunyikan, hanya syarat minimal menginap yang dikirim.
+  res.json({ quote: showPrices(s) ? q : { nights: q.nights, minNights: q.minNights }, nights });
 });
 
 app.get('/api/availability', (req, res) => {
@@ -217,14 +260,26 @@ app.get('/api/availability', (req, res) => {
   for (const b of c.bookings) mark(b.check_in, b.check_out, b.status === 'approved' ? 'booked' : 'pending');
   for (const k of c.blocks) mark(k.start_date, k.end_date, 'blocked');
   const unit = getUnit(unitId);
-  res.json({ unit_id: unitId, nights: out, prices: unit ? priceMap(unit, from, to, s) : {} });
+  if (showPrices(s)) return res.json({ unit_id: unitId, nights: out, prices: unit ? priceMap(unit, from, to, s) : {} });
+
+  // Mode tanpa harga: tampilkan nama pemasar pada malam yang sudah terboking (yang sudah diterima menang atas yang menunggu).
+  const names = {};
+  for (const b of c.bookings) {
+    if (!b.marketer_name) continue;
+    let d = b.check_in < from ? from : b.check_in;
+    const stop = b.check_out > to ? to : b.check_out;
+    for (; d < stop; d = addDays(d, 1)) if (!names[d] || b.status === 'approved') names[d] = b.marketer_name;
+  }
+  res.json({ unit_id: unitId, nights: out, names });
 });
 
 app.post('/api/bookings', (req, res) => {
-  if (!allow('book:' + req.ip, 6, 3600e3)) throw new HttpError(429, 'Terlalu banyak permintaan. Coba lagi nanti.');
+  const s = getSettings();
+  const showP = showPrices(s);
+  // Pemasar bisa membuat banyak booking dari satu jaringan, jadi batasnya lebih longgar di mode tanpa harga.
+  if (!allow('book:' + req.ip, showP ? 6 : 30, 3600e3)) throw new HttpError(429, 'Terlalu banyak permintaan. Coba lagi nanti.');
   const b = req.body || {};
   if (b.website) return res.json({ ok: true }); // honeypot untuk bot
-  const s = getSettings();
   const unit = getUnit(Number(b.unit_id) || listUnits()[0]?.id);
   if (!unit || !unit.active) throw new HttpError(400, 'Unit tidak ditemukan.');
   const name = clean(b.name, 80);
@@ -235,7 +290,10 @@ app.post('/api/bookings', (req, res) => {
   const note = clean(b.note, 300);
   const q = quote(unit, b.check_in, b.check_out, guests, s);
   assertMinNights(q);
-  const { total, dp } = q;
+  const marketer = resolveMarketer(b, s);
+  // Harga ditentukan server bila ditampilkan; bila disembunyikan, harga total diisi manual oleh pemesan.
+  const total = showP ? q.total : manualTotal(b.total);
+  const dp = showP ? q.dp : dpFor(total, s);
 
   const booking = tx(() => {
     const open = db
@@ -246,7 +304,7 @@ app.post('/api/bookings', (req, res) => {
       throw new HttpError(409, 'Maaf, sebagian tanggal itu baru saja terisi. Pilih tanggal lain.');
     return insertBooking({
       unit, name, phone, check_in: b.check_in, check_out: b.check_out, nights, guests, note,
-      total, dp, status: 'pending', source: 'web',
+      total, dp, status: 'pending', source: 'web', marketer,
     });
   });
 
@@ -343,12 +401,13 @@ admin.post('/bookings', (req, res) => {
   const { nights, guests } = validateStay(b, unit, s);
   const calc = quote(unit, b.check_in, b.check_out, guests, s);
   const total = Number.isFinite(Number(b.total)) && b.total !== '' && b.total != null ? Math.max(0, Math.round(Number(b.total))) : calc.total;
+  const marketer = resolveMarketer(b, s, { required: false });
   const booking = tx(() => {
     if (conflicts(unit.id, b.check_in, b.check_out, s).any)
       throw new HttpError(409, 'Tanggal bentrok dengan booking atau blokir lain.');
     return insertBooking({
       unit, name, phone, check_in: b.check_in, check_out: b.check_out, nights, guests,
-      note: clean(b.note, 300), total, dp: 0, status: 'approved', source: 'manual',
+      note: clean(b.note, 300), total, dp: 0, status: 'approved', source: 'manual', marketer,
     });
   });
   res.status(201).json({ booking });
@@ -412,6 +471,7 @@ const SECRET_KEYS = ['waha_api_key', 'fonnte_token'];
 
 const SETTING_RULES = {
   property_name: { max: 80 },
+  show_prices: { bool: true },
   admin_wa: { phones: true },
   wa_provider: { oneOf: ['none', 'waha', 'fonnte'] },
   waha_url: { max: 200, url: true },
@@ -458,6 +518,8 @@ admin.put('/settings', (req, res) => {
       v = Number(v);
       if (!Number.isInteger(v) || v < rule.int[0] || v > rule.int[1])
         throw new HttpError(400, `Nilai "${k}" harus angka ${rule.int[0]} sampai ${rule.int[1]}.`);
+    } else if (rule.bool) {
+      v = v === true || v === 1 || v === '1' || v === 'true' ? '1' : '0';
     } else if (rule.phones) {
       const parts = String(v ?? '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
       const nums = parts.map((x) => normalizePhone(x));
@@ -498,6 +560,71 @@ admin.put('/settings', (req, res) => {
   res.json({ ok: true });
 });
 
+// ----- Pemasar -----
+const newMarketerCode = () => {
+  for (let i = 0; i < 10; i++) {
+    const code = crypto.randomBytes(4).toString('hex');
+    if (!db.prepare('SELECT 1 FROM marketers WHERE code = ?').get(code)) return code;
+  }
+  throw new HttpError(500, 'Gagal membuat kode pemasar, coba lagi.');
+};
+
+admin.get('/marketers', (req, res) => {
+  const base = baseUrl(req);
+  const rows = db
+    .prepare(
+      `SELECT m.*, (SELECT COUNT(*) FROM bookings b WHERE b.marketer_id = m.id) AS bookings,
+              (SELECT COUNT(*) FROM bookings b WHERE b.marketer_id = m.id AND b.status = 'approved') AS approved
+       FROM marketers m ORDER BY m.active DESC, m.name COLLATE NOCASE`
+    )
+    .all();
+  res.json({ marketers: rows.map((m) => ({ ...m, link: `${base}/?p=${m.code}` })) });
+});
+
+admin.post('/marketers', (req, res) => {
+  const name = clean(req.body?.name, 60);
+  if (name.length < 2) throw new HttpError(400, 'Nama pemasar wajib diisi.');
+  const rawPhone = String(req.body?.phone ?? '').trim();
+  const phone = rawPhone ? normalizePhone(rawPhone) : '';
+  if (rawPhone && !phone) throw new HttpError(400, 'Nomor WhatsApp pemasar tidak valid.');
+  if (db.prepare('SELECT 1 FROM marketers WHERE name = ? COLLATE NOCASE').get(name)) throw new HttpError(409, 'Nama pemasar itu sudah ada.');
+  const r = db
+    .prepare('INSERT INTO marketers(name, phone, note, code, created_at) VALUES(?,?,?,?,?)')
+    .run(name, phone, clean(req.body?.note, 200), newMarketerCode(), new Date().toISOString());
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+admin.put('/marketers/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM marketers WHERE id = ?').get(Number(req.params.id));
+  if (!row) throw new HttpError(404, 'Pemasar tidak ditemukan.');
+  const b = req.body || {};
+  const name = b.name !== undefined ? clean(b.name, 60) : row.name;
+  if (name.length < 2) throw new HttpError(400, 'Nama pemasar wajib diisi.');
+  const dupe = db.prepare('SELECT id FROM marketers WHERE name = ? COLLATE NOCASE AND id != ?').get(name, row.id);
+  if (dupe) throw new HttpError(409, 'Nama pemasar itu sudah ada.');
+  let phone = row.phone;
+  if (b.phone !== undefined) {
+    const raw = String(b.phone ?? '').trim();
+    phone = raw ? normalizePhone(raw) : '';
+    if (raw && !phone) throw new HttpError(400, 'Nomor WhatsApp pemasar tidak valid.');
+  }
+  const active = b.active !== undefined ? (b.active ? 1 : 0) : row.active;
+  const note = b.note !== undefined ? clean(b.note, 200) : row.note;
+  tx(() => {
+    db.prepare('UPDATE marketers SET name = ?, phone = ?, note = ?, active = ? WHERE id = ?').run(name, phone, note, active, row.id);
+    if (name !== row.name) db.prepare('UPDATE bookings SET marketer_name = ? WHERE marketer_id = ?').run(name, row.id);
+  });
+  res.json({ ok: true });
+});
+
+admin.delete('/marketers/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (db.prepare('SELECT 1 FROM bookings WHERE marketer_id = ?').get(id))
+    throw new HttpError(409, 'Pemasar ini sudah punya booking, jadi tidak bisa dihapus. Nonaktifkan saja.');
+  db.prepare('DELETE FROM marketers WHERE id = ?').run(id);
+  res.json({ ok: true });
+});
+
 // ----- Harga -----
 const rupiahInt = (v, label, { min = 0, max = 100_000_000 } = {}) => {
   const n = Number(v);
@@ -513,6 +640,7 @@ admin.get('/pricing', (req, res) => {
   const unit = units[0];
   const to = addDays(today, 28);
   res.json({
+    show_prices: showPrices(s),
     units: units.map(({ id, name, price, weekend_price, extra_fee }) => ({ id, name, price, weekend_price, extra_fee })),
     weekend_days: [...parseWeekendDays(s.weekend_days)].sort(),
     rules: db
