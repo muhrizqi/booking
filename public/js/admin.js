@@ -269,7 +269,7 @@
   });
 
   // ---------- Pengaturan ----------
-  const SETTING_IDS = ['admin_wa', 'wa_provider', 'waha_url', 'waha_session', 'payment_info', 'dp_percent', 'pending_hours', 'checkin_time', 'checkout_time', 'rules', 'property_name', 'address'];
+  const SETTING_IDS = ['admin_wa', 'wa_provider', 'waha_url', 'waha_session', 'payment_info', 'dp_percent', 'pending_hours', 'checkin_time', 'checkout_time', 'rules', 'property_name', 'address', 'confirm_to'];
   const SECRET_IDS = ['waha_api_key', 'fonnte_token'];
 
   function waStateText() {
@@ -493,7 +493,7 @@
   });
 
   // ---------- Pesan ----------
-  const KIND = { admin_new: 'Booking baru ke admin', guest_approved: 'Diterima ke penyewa', guest_rejected: 'Ditolak ke penyewa', guest_cancelled: 'Dibatalkan ke penyewa' };
+  const KIND = { admin_new: 'Booking baru ke admin', guest_approved: 'Diterima ke penyewa', guest_rejected: 'Ditolak ke penyewa', guest_cancelled: 'Dibatalkan ke penyewa', marketer_approved: 'Diterima ke pemasar', marketer_rejected: 'Ditolak ke pemasar', marketer_cancelled: 'Dibatalkan ke pemasar' };
   const MSG_STATUS = { sent: 'Terkirim', failed: 'Gagal', skipped: 'Belum dikirim', queued: 'Mengirim' };
 
   async function loadMessages() {

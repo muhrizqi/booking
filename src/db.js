@@ -116,6 +116,7 @@ const DEFAULT_SETTINGS = {
   admin_wa: '081311351136',
   checkin_time: '14.00',
   checkout_time: '12.00',
+  confirm_to: 'marketer', // konfirmasi WA ke: 'marketer' (bila ada nomornya, kalau tidak ke tamu) atau 'both'
   show_prices: '1', // '0' = harga disembunyikan dari halaman publik; harga diisi manual saat booking
   weekend_days: '5,6', // malam yang memakai harga akhir pekan: 0=Min, 1=Sen, ..., 5=Jum, 6=Sab
   dp_percent: '50',

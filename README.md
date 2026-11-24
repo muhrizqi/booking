@@ -82,6 +82,7 @@ Untuk dipakai para pemasar, harga bisa disembunyikan: **Admin → Pengaturan →
 - Pemasar wajib dipilih. Kelola daftar di **Admin → Pemasar**; tiap pemasar punya tautan pribadi `/?p=kode` yang mengunci namanya.
 - Nama pemasar tampil di bawah tanggal yang sudah terboking; ketuk tanggalnya untuk melihat keterangan.
 - Pemasar yang sudah punya booking tidak bisa dihapus (nonaktifkan saja). Mengganti nama ikut memperbarui riwayat.
+- Konfirmasi WhatsApp (diterima/ditolak/dibatalkan) bawaannya dikirim ke pemasar saja; ubah ke "Pemasar dan tamu" di Pengaturan → Konfirmasi WhatsApp. Tanpa pemasar atau tanpa nomor HP pemasar, konfirmasi dikirim ke tamu.
 - Menyalakan kembali tampilan harga mengembalikan perilaku semula.
 
 ## Panel admin

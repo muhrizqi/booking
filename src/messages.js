@@ -50,8 +50,10 @@ export function guestToAdminMsg(b, s) {
 }
 
 /** Pesan untuk penyewa. kind: reminder | approved | rejected | cancelled */
-export function guestMsg(kind, b, s, base, reason = '') {
-  const sapa = `Assalamu'alaikum ${b.name},`;
+export function guestMsg(kind, b, s, base, reason = '', asMarketer = false) {
+  const sapa = asMarketer
+    ? `Assalamu'alaikum ${b.marketer_name},\n(Konfirmasi untuk tamu Anda: ${b.name})`
+    : `Assalamu'alaikum ${b.name},`;
   const cek = `Cek status booking: ${base}/#cek=${b.code}`;
   if (kind === 'approved') {
     const rules = [

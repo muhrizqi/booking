@@ -160,14 +160,25 @@ function publicBooking(b, s, { withPayment = false } = {}) {
   };
 }
 
+/** Penerima WA konfirmasi: [{ to, asMarketer }]. Bawaan: pemasar saja; 'both' = pemasar dan tamu. Tanpa nomor pemasar, jatuh ke tamu. */
+function confirmTargets(b, s) {
+  const mk = b.marketer_id ? db.prepare('SELECT phone FROM marketers WHERE id = ?').get(b.marketer_id) : null;
+  const mkPhone = mk?.phone ? normalizePhone(mk.phone) : null;
+  const out = [];
+  if (mkPhone) out.push({ to: mkPhone, asMarketer: true });
+  if ((s.confirm_to === 'both' || !mkPhone) && b.phone && b.phone !== mkPhone) out.push({ to: b.phone, asMarketer: false });
+  return out;
+}
+
 function adminBooking(b, s, base, unitsById) {
   const kind = { pending: 'reminder', approved: 'approved', rejected: 'rejected', cancelled: 'cancelled' }[b.status];
-  const text = b.phone ? guestMsg(kind, b, s, base, b.reject_reason) : '';
+  const t = confirmTargets(b, s)[0];
+  const text = t ? guestMsg(kind, b, s, base, b.reject_reason, t.asMarketer) : '';
   return {
     ...b,
     unit_name: unitsById[b.unit_id]?.name || '-',
     expired: b.status === 'pending' && b.created_at < pendingCutoff(s),
-    wa_url: b.phone ? `https://wa.me/${b.phone}?text=${encodeURIComponent(text)}` : null,
+    wa_url: t ? `https://wa.me/${t.to}?text=${encodeURIComponent(text)}` : null,
   };
 }
 
@@ -426,12 +437,12 @@ function decide(req, res, from, to, kind) {
   );
   const updated = getBooking(b.id);
   const base = baseUrl(req);
-  if (updated.phone) {
+  for (const t of confirmTargets(updated, s)) {
     queueMessage({
-      to: updated.phone,
-      kind: 'guest_' + kind,
+      to: t.to,
+      kind: (t.asMarketer ? 'marketer_' : 'guest_') + kind,
       bookingId: updated.id,
-      body: guestMsg(kind, updated, s, base, reason),
+      body: guestMsg(kind, updated, s, base, reason, t.asMarketer),
     });
   }
   const unitsById = Object.fromEntries(listUnits().map((u) => [u.id, u]));
@@ -472,6 +483,7 @@ const SECRET_KEYS = ['waha_api_key', 'fonnte_token'];
 const SETTING_RULES = {
   property_name: { max: 80 },
   show_prices: { bool: true },
+  confirm_to: { oneOf: ['marketer', 'both'] },
   admin_wa: { phones: true },
   wa_provider: { oneOf: ['none', 'waha', 'fonnte'] },
   waha_url: { max: 200, url: true },
