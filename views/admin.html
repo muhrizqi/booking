@@ -71,6 +71,10 @@
         </div>
         <div class="panel detail" id="day-detail">Ketuk tanggal untuk melihat isinya.</div>
 
+        <div class="btns-row" style="margin-bottom:1.2rem">
+          <button type="button" class="btn line" id="copy-cleaning-wa">Salin jadwal kebersihan &amp; extra bed (WA)</button>
+        </div>
+
         <h2>Blokir tanggal</h2>
         <p class="catatan">Untuk perbaikan, acara masjid, atau tanggal yang tidak disewakan.</p>
         <form id="block-form" class="panel">
@@ -123,33 +127,50 @@
 
       <section id="tab-keuangan" role="tabpanel" hidden>
         <div class="panel">
-          <div class="field"><label for="rp-month">Periode (bulan check-in)</label><select id="rp-month"></select></div>
-          <p class="catatan">Laporan menghitung booking yang sudah diterima. "Diterima" adalah uang yang sudah dicatat lewat Catat pembayaran di kartu booking.</p>
+          <div class="field"><label for="rp-month">Periode Laporan &amp; Buku Kas</label><select id="rp-month"></select></div>
+          <p class="catatan">Ringkasan di bawah menampilkan saldo kas riil (seluruh uang masuk dikurangi uang keluar) serta mutasi kas yang dapat diedit langsung jika ada salah input nominal.</p>
         </div>
-        <div id="report"></div>
 
-        <h2>Pengeluaran</h2>
+        <h2>Pembukuan Kas Riil</h2>
+        <div id="cashbook-summary"></div>
+
+        <form id="cash-in-form" class="panel">
+          <h3>Tambah Pemasukan Kas Lain (Non-Booking)</h3>
+          <div class="two">
+            <div class="field"><label for="ci-amount">Jumlah masuk (Rp)</label><input id="ci-amount" inputmode="numeric" required placeholder="Misalnya: 1000000"></div>
+            <div class="field"><label for="ci-date">Tanggal</label><input id="ci-date" type="date"></div>
+          </div>
+          <div class="field"><label for="ci-note">Keterangan</label><input id="ci-note" maxlength="160" required placeholder="Misalnya: Saldo awal kas, tambahan dana operasional"></div>
+          <button class="btn" type="submit">Catat pemasukan kas</button>
+        </form>
+
         <form id="ex-form" class="panel">
+          <h3>Catat Pengeluaran Kas</h3>
           <div class="field">
             <label for="ex-kind">Jenis</label>
             <select id="ex-kind">
+              <option value="other">Pengeluaran operasional / lain-lain</option>
               <option value="marketer_share">Bagian pemasar dari DP hangus</option>
-              <option value="other">Pengeluaran lain</option>
             </select>
           </div>
-          <div class="field" id="ex-booking-field">
+          <div class="field" id="ex-booking-field" hidden>
             <label for="ex-booking">Booking batal</label>
             <select id="ex-booking"></select>
             <small id="ex-hint">Pilih booking batal yang DP-nya ditahan. Pemasarnya terisi otomatis.</small>
           </div>
           <div class="two">
-            <div class="field"><label for="ex-amount">Jumlah (Rp)</label><input id="ex-amount" inputmode="numeric" required></div>
+            <div class="field"><label for="ex-amount">Jumlah keluar (Rp)</label><input id="ex-amount" inputmode="numeric" required></div>
             <div class="field"><label for="ex-date">Tanggal</label><input id="ex-date" type="date"></div>
           </div>
-          <div class="field"><label for="ex-note">Keterangan</label><input id="ex-note" maxlength="160" placeholder="Misalnya: transfer ke pemasar, beli perlengkapan"></div>
+          <div class="field"><label for="ex-note">Keterangan</label><input id="ex-note" maxlength="160" placeholder="Misalnya: laundry sprei, token listrik, sabun"></div>
           <button class="btn" type="submit">Catat pengeluaran</button>
         </form>
-        <div id="ex-list"></div>
+
+        <h3>Riwayat Mutasi Kas (Masuk &amp; Keluar)</h3>
+        <div id="cashbook-list"></div>
+
+        <h2 style="margin-top:2rem">Laporan Per Booking &amp; Pemasar</h2>
+        <div id="report"></div>
       </section>
 
       <section id="tab-harga" role="tabpanel" hidden>

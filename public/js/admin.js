@@ -240,6 +240,56 @@
   $('#prev').addEventListener('click', () => { S.month = S.month.m === 0 ? { y: S.month.y - 1, m: 11 } : { y: S.month.y, m: S.month.m - 1 }; renderCal(); });
   $('#next').addEventListener('click', () => { S.month = S.month.m === 11 ? { y: S.month.y + 1, m: 0 } : { y: S.month.y, m: S.month.m + 1 }; renderCal(); });
 
+  $('#copy-cleaning-wa').addEventListener('click', async () => {
+    const today = todayWIB();
+    const ci = S.settings?.checkin_time || '13.00';
+    const co = S.settings?.checkout_time || '11.00';
+    const bedOnlyCap = 7; // Kapasitas ranjang tetap tanpa extra bed (Kamar 1:2, Kamar 2:2, Kamar 3:2, Kamar 4:1)
+    const upcoming = S.bookings
+      .filter((b) => b.status === 'approved' && b.check_out >= today)
+      .sort((a, b) => a.check_in.localeCompare(b.check_in));
+
+    if (!upcoming.length) {
+      toast('Belum ada jadwal booking aktif mendatang.', true);
+      return;
+    }
+
+    const lines = [
+      `Assalamu'alaikum. Berikut jadwal persiapan & pembersihan *${S.settings?.property_name || 'Guest House'}*:`,
+      '',
+    ];
+    upcoming.forEach((b, idx) => {
+      const totalExtra = Math.max(0, b.guests - bedOnlyCap);
+      const inRoomExtra = Math.min(3, totalExtra);
+      const hallExtra = Math.max(0, totalExtra - 3);
+
+      let extraText = 'Tidak perlu extra bed (kapasitas ranjang normal maksimal 7 orang)';
+      if (totalExtra > 0) {
+        const parts = [];
+        if (inRoomExtra > 0) parts.push(`${inRoomExtra} extra bed di dalam kamar`);
+        if (hallExtra > 0) parts.push(`${hallExtra} extra bed di ruang pertemuan`);
+        extraText = `Siapkan total *${totalExtra} extra bed* (${parts.join(' + ')})`;
+      }
+
+      lines.push(
+        `*${idx + 1}. Tamu: ${b.name} (${b.guests} Orang)*`,
+        `• *Siap sebelum tamu masuk:* ${fmt(b.check_in)} (tamu check-in pkl ${ci} WIB)`,
+        `• *Extra bed:* ${extraText}`,
+        `• *Bersihkan setelah pulang:* ${fmt(b.check_out)} mulai pkl ${co} WIB`,
+        ''
+      );
+    });
+    lines.push('Terima kasih.');
+
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Jadwal kebersihan disalin! Silakan paste ke WhatsApp.');
+    } catch {
+      openModal('Salin Jadwal Kebersihan (WA)', el('textarea', { rows: 12, text }));
+    }
+  });
+
   function renderBlocks() {
     const box = $('#blocks');
     if (!S.blocks.length) { box.replaceChildren(); return; }
@@ -538,10 +588,23 @@
     const list = d.payments.length
       ? el('ul', { class: 'pay-list' }, d.payments.map((p) => el('li', {},
           el('span', {}, `${fmt(p.paid_at)}: `, el('strong', { text: p.amount < 0 ? `Keluar ${rupiah(-p.amount)}` : rupiah(p.amount) }), p.note ? ` (${p.note})` : ''),
-          el('button', { type: 'button', class: 'btn danger mini', text: 'Hapus', onclick: async () => {
-            if (!confirm(`Hapus catatan pembayaran ${rupiah(p.amount)}?`)) return;
-            try { await api(`/payments/${p.id}`, 'DELETE'); await loadBookings(); renderBookings(); paymentsModal(b); } catch (err) { toast(err.message, true); }
-          } }))))
+          el('span', { class: 'btns-row' },
+            el('button', { type: 'button', class: 'btn line mini', text: 'Edit', onclick: () => {
+              editCashEntryModal({
+                source: 'payment',
+                ref_id: p.id,
+                title: p.amount < 0 ? 'Edit Pengembalian Dana' : 'Edit Pembayaran Masuk',
+                amount: Math.abs(p.amount),
+                date: p.paid_at,
+                note: p.note,
+                onSaved: () => paymentsModal(b),
+              });
+            } }),
+            el('button', { type: 'button', class: 'btn danger mini', text: 'Hapus', onclick: async () => {
+              if (!confirm(`Hapus catatan pembayaran ${rupiah(p.amount)}?`)) return;
+              try { await api(`/payments/${p.id}`, 'DELETE'); await loadBookings(); renderBookings(); paymentsModal(b); } catch (err) { toast(err.message, true); }
+            } })
+          ))))
       : el('p', { class: 'empty', text: 'Belum ada pembayaran tercatat.' });
     const form = el('form', {},
       el('h3', { text: 'Tambah pembayaran' }),
@@ -591,21 +654,132 @@
     } catch (err) { toast(err.message, true); }
   }
 
-  // ---------- Keuangan ----------
+  // ---------- Keuangan & Pembukuan Kas ----------
   const monthLabel = (m) => (m === 'all' ? 'Semua waktu' : new Date(m + '-01T00:00:00Z').toLocaleString('id-ID', { timeZone: 'UTC', month: 'long', year: 'numeric' }));
+
+  function editCashEntryModal({ source, ref_id, title, amount, date, note, onSaved }) {
+    const inpAmount = el('input', { id: 'ce-amount', inputmode: 'numeric', value: String(amount), required: true });
+    const inpDate = el('input', { id: 'ce-date', type: 'date', value: date, required: true });
+    const inpNote = el('input', { id: 'ce-note', maxlength: 160, value: note || '' });
+    const form = el('form', {},
+      field('ce-amount', 'Nominal (Rp)', inpAmount),
+      field('ce-date', 'Tanggal transaksi', inpDate),
+      field('ce-note', 'Keterangan / Catatan', inpNote),
+      el('button', { class: 'btn', type: 'submit', text: 'Simpan perubahan' })
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const endpoint = source === 'payment' ? `/payments/${ref_id}` : `/expenses/${ref_id}`;
+        await api(endpoint, 'PATCH', {
+          amount: digits(inpAmount.value),
+          ...(source === 'payment' ? { paid_at: inpDate.value } : { spent_at: inpDate.value }),
+          note: inpNote.value,
+        });
+        closeModal();
+        toast('Data keuangan berhasil diperbarui.');
+        await loadBookings();
+        if (S.tab === 'booking') renderBookings();
+        if (S.tab === 'keuangan') await loadReport();
+        if (onSaved) onSaved();
+      } catch (err) { toast(err.message, true); }
+    });
+    openModal(title, form);
+  }
+
   async function loadReport() {
     try {
       const month = $('#rp-month').value || todayWIB().slice(0, 7);
-      const r = await api(`/report?month=${month}`);
+      const [r, cb] = await Promise.all([
+        api(`/report?month=${month}`),
+        api(`/cashbook?month=${month}`),
+      ]);
       const sel = $('#rp-month');
       const opts = ['all', ...new Set([todayWIB().slice(0, 7), ...r.months])].sort((x, y) => (x === 'all' ? -1 : y === 'all' ? 1 : y.localeCompare(x)));
       sel.replaceChildren(...opts.map((m) => el('option', { value: m, text: monthLabel(m) })));
       sel.value = r.month;
+      renderCashbook(cb);
       renderReport(r);
       loadExpenses().catch(() => {});
     } catch (err) { toast(err.message, true); }
   }
   $('#rp-month').addEventListener('change', loadReport);
+
+  function renderCashbook(cb) {
+    const row = (k, v, strong) => [el('dt', { text: k }), el('dd', { class: strong ? 'strong' : '', text: v })];
+    $('#cashbook-summary').replaceChildren(
+      el('article', { class: 'card rp-card' },
+        el('h3', { text: 'Saldo Kas Riil Saat Ini' }),
+        el('dl', { class: 'rp-grid' },
+          row('Saldo Kas Riil (Keseluruhan)', rupiah(cb.current_balance), true),
+          row('Total Uang Masuk (Semua waktu)', rupiah(cb.total_in_all)),
+          row('Total Uang Keluar (Semua waktu)', rupiah(cb.total_out_all)),
+          cb.month !== 'all' ? [
+            row(`Masuk (${monthLabel(cb.month)})`, rupiah(cb.period_in)),
+            row(`Keluar (${monthLabel(cb.month)})`, rupiah(cb.period_out)),
+            row(`Selisih Kas (${monthLabel(cb.month)})`, rupiah(cb.period_net), true),
+          ] : ''
+        )
+      )
+    );
+
+    const list = $('#cashbook-list');
+    if (!cb.entries.length) {
+      list.replaceChildren(el('p', { class: 'empty', text: 'Belum ada mutasi kas pada periode ini.' }));
+      return;
+    }
+    list.replaceChildren(...cb.entries.map((item) => {
+      const isIn = item.type === 'in';
+      const btns = el('div', { class: 'btns' });
+      if (item.editable) {
+        btns.append(el('button', {
+          type: 'button', class: 'btn line mini', text: 'Edit nominal / tanggal',
+          onclick: () => editCashEntryModal({
+            source: item.source,
+            ref_id: item.ref_id,
+            title: item.title,
+            amount: item.amount,
+            date: item.date,
+            note: item.subtitle,
+          }),
+        }));
+      }
+      if (item.source === 'cash_income') {
+        btns.append(el('button', {
+          type: 'button', class: 'btn danger mini', text: 'Hapus',
+          onclick: async () => {
+            if (!confirm(`Hapus pemasukan kas ${rupiah(item.amount)}?`)) return;
+            try { await api(`/cash-incomes/${item.ref_id}`, 'DELETE'); toast('Pemasukan kas dihapus.'); await loadReport(); }
+            catch (err) { toast(err.message, true); }
+          },
+        }));
+      } else if (item.source === 'expense') {
+        btns.append(el('button', {
+          type: 'button', class: 'btn danger mini', text: 'Hapus',
+          onclick: async () => {
+            if (!confirm(`Hapus pengeluaran ${rupiah(item.amount)}?`)) return;
+            try { await api(`/expenses/${item.ref_id}`, 'DELETE'); toast('Pengeluaran dihapus.'); await loadReport(); }
+            catch (err) { toast(err.message, true); }
+          },
+        }));
+      }
+
+      return el('article', { class: 'card' },
+        el('div', { class: 'card-top' },
+          el('span', {},
+            el('span', { class: `chip ${isIn ? 'approved' : 'cancelled'}`, text: isIn ? '+ MASUK' : '- KELUAR' }),
+            ' ',
+            el('strong', { text: rupiah(item.amount) })
+          ),
+          el('span', { class: 'meta', text: fmt(item.date) })
+        ),
+        el('p', { class: 'who', text: item.title }),
+        item.subtitle ? el('p', { class: 'meta', text: item.subtitle }) : null,
+        el('p', { class: 'meta', text: `Saldo kas setelah transaksi: ${rupiah(item.balance)}` }),
+        btns.children.length ? btns : null
+      );
+    }));
+  }
 
   function renderReport(r) {
     const row = (k, v, strong) => [el('dt', { text: k }), el('dd', { class: strong ? 'strong' : '', text: v })];
@@ -623,51 +797,50 @@
     const rows = r.rows;
     $('#report').replaceChildren(
       card(`Total ${monthLabel(r.month)}`, t),
-      el('p', { class: 'catatan', text: `Uang masuk yang tercatat pada periode ini (berdasarkan tanggal bayar): ${rupiah(r.cash_in)}.${r.refunded ? ` Pengembalian dana ke customer pada periode ini: ${rupiah(r.refunded)}.` : ''} DP hangus dari booking batal tetap dihitung sebagai pemasukan, tanpa komisi pemasar.` }),
-      el('h2', { text: 'Per pemasar' }),
+      el('h3', { text: 'Per pemasar', style: 'margin-top:1rem' }),
       ...(rows.length ? rows.map((g) => card(g.name, g)) : [el('p', { class: 'empty', text: 'Belum ada booking diterima pada periode ini.' })])
     );
   }
 
-  // ---------- Pengeluaran ----------
-  const EX_KIND = { marketer_share: 'Bagian pemasar dari DP hangus', other: 'Pengeluaran lain' };
+  // ---------- Form Pemasukan Kas & Pengeluaran ----------
   let forfeitedList = [];
 
   function syncExForm() {
     const share = $('#ex-kind').value === 'marketer_share';
     $('#ex-booking-field').hidden = !share;
-    $('#ex-note').placeholder = share ? 'Boleh dikosongkan' : 'Wajib diisi, misalnya: beli perlengkapan';
+    $('#ex-note').placeholder = share ? 'Boleh dikosongkan' : 'Wajib diisi, misalnya: laundry sprei, token listrik';
     const sel = $('#ex-booking');
     const b = forfeitedList.find((x) => String(x.id) === sel.value);
     $('#ex-hint').textContent = b ? `${b.marketer_name}: DP hangus ${rupiah(b.kept)}, sudah dibagikan ${rupiah(b.shared)}, sisa ${rupiah(b.kept - b.shared)}.` : 'Belum ada booking batal dengan DP hangus yang punya pemasar.';
   }
 
   async function loadExpenses() {
-    const month = $('#rp-month').value || 'all';
-    const [{ expenses }, { bookings }] = await Promise.all([api(`/expenses?month=${month}`), api('/forfeited')]);
+    const { bookings } = await api('/forfeited');
     forfeitedList = bookings.filter((b) => b.kept - b.shared > 0);
     const sel = $('#ex-booking');
     const prev = sel.value;
     sel.replaceChildren(...forfeitedList.map((b) => el('option', { value: String(b.id), text: `${b.code}, ${b.name} (pemasar ${b.marketer_name}), sisa ${rupiah(b.kept - b.shared)}` })));
     if (forfeitedList.some((b) => String(b.id) === prev)) sel.value = prev;
     if (!$('#ex-date').value) $('#ex-date').value = todayWIB();
+    if (!$('#ci-date').value) $('#ci-date').value = todayWIB();
     syncExForm();
-    const list = $('#ex-list');
-    if (!expenses.length) { list.replaceChildren(el('p', { class: 'empty', text: 'Belum ada pengeluaran tercatat pada periode ini.' })); return; }
-    const total = expenses.reduce((a, e) => a + e.amount, 0);
-    list.replaceChildren(
-      el('p', { class: 'catatan', text: `Total pengeluaran periode ini: ${rupiah(total)}.` }),
-      ...expenses.map((e) => el('article', { class: 'card' },
-        el('div', { class: 'card-top' }, el('strong', { text: rupiah(e.amount) }), el('span', { class: 'meta', text: fmt(e.spent_at) })),
-        el('p', { class: 'who', text: EX_KIND[e.kind] || e.kind }),
-        el('p', { class: 'meta', text: [e.marketer_name && `Pemasar ${e.marketer_name}`, e.booking_code && `Booking ${e.booking_code} (${e.booking_name})`, e.note].filter(Boolean).join(', ') }),
-        el('div', { class: 'btns' }, el('button', { type: 'button', class: 'btn danger mini', text: 'Hapus', onclick: async () => {
-          if (!confirm(`Hapus catatan pengeluaran ${rupiah(e.amount)}?`)) return;
-          try { await api(`/expenses/${e.id}`, 'DELETE'); toast('Pengeluaran dihapus.'); await loadReport(); } catch (err) { toast(err.message, true); }
-        } }))
-      ))
-    );
   }
+
+  $('#cash-in-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/cash-incomes', 'POST', {
+        amount: digits($('#ci-amount').value),
+        received_at: $('#ci-date').value || todayWIB(),
+        note: $('#ci-note').value,
+      });
+      $('#ci-amount').value = '';
+      $('#ci-note').value = '';
+      toast('Pemasukan kas dicatat.');
+      await loadReport();
+    } catch (err) { toast(err.message, true); }
+  });
+
   $('#ex-kind').addEventListener('change', syncExForm);
   $('#ex-booking').addEventListener('change', syncExForm);
   $('#ex-form').addEventListener('submit', async (e) => {
@@ -676,10 +849,7 @@
     try {
       await api('/expenses', 'POST', { kind: $('#ex-kind').value, booking_id: share ? $('#ex-booking').value : undefined, amount: digits($('#ex-amount').value), spent_at: $('#ex-date').value, note: $('#ex-note').value });
       $('#ex-amount').value = ''; $('#ex-note').value = '';
-      const month = $('#rp-month').value;
-      const dt = $('#ex-date').value || todayWIB();
-      const outside = !share && month !== 'all' && dt.slice(0, 7) !== month;
-      toast(outside ? `Pengeluaran dicatat pada ${monthLabel(dt.slice(0, 7))}. Ganti periode untuk melihatnya.` : 'Pengeluaran dicatat.');
+      toast('Pengeluaran kas dicatat.');
       await loadReport();
     } catch (err) { toast(err.message, true); }
   });

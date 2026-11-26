@@ -18,6 +18,15 @@ export const dbInfo = (() => {
 export const db = new DatabaseSync(dbInfo.file);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
 
+// Pemasukan kas riil di luar transaksi booking (modal awal kas, dll)
+db.exec(`CREATE TABLE IF NOT EXISTS cash_incomes (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  received_at  TEXT NOT NULL,
+  amount       INTEGER NOT NULL,
+  note         TEXT NOT NULL DEFAULT '',
+  created_at   TEXT NOT NULL
+);`);
+
 // Skema sudah siap multi-unit: semua booking & blokir terikat ke unit_id.
 db.exec(`
 CREATE TABLE IF NOT EXISTS units (

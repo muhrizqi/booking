@@ -532,8 +532,20 @@ admin.patch('/bookings/:id', (req, res) => {
   }
   if (b.commission_paid_at && (mId !== b.marketer_id || total !== b.total))
     throw new HttpError(409, 'Komisi booking ini sudah ditandai dibayar, jadi pemasar dan total tidak bisa diubah.');
-  db.prepare('UPDATE bookings SET name=?, phone=?, guests=?, total=?, dp_amount=?, note=?, marketer_id=?, marketer_name=? WHERE id=?')
-    .run(name, phone, guests, total, dp, note, mId, mName, b.id);
+
+  tx(() => {
+    db.prepare('UPDATE bookings SET name=?, phone=?, guests=?, total=?, dp_amount=?, note=?, marketer_id=?, marketer_name=? WHERE id=?')
+      .run(name, phone, guests, total, dp, note, mId, mName, b.id);
+
+    // Sinkronisasi otomatis jika DP diubah dan baru ada 1 catatan pembayaran DP di tabel payments
+    if (dp !== b.dp_amount) {
+      const pays = db.prepare('SELECT id, amount FROM payments WHERE booking_id = ? AND amount > 0 ORDER BY id').all(b.id);
+      if (pays.length === 1 && pays[0].amount === b.dp_amount) {
+        db.prepare('UPDATE payments SET amount = ? WHERE id = ?').run(dp, pays[0].id);
+      }
+    }
+  });
+
   const unitsById = Object.fromEntries(listUnits().map((u) => [u.id, u]));
   res.json({ booking: adminBooking(getBooking(b.id), s, baseUrl(req), unitsById) });
 });
@@ -574,6 +586,186 @@ admin.post('/bookings/:id/refunds', (req, res) => {
 admin.delete('/payments/:id', (req, res) => {
   db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
+});
+
+// Edit transaksi pembayaran (uang masuk/refund) secara langsung dari Keuangan atau Modal Pembayaran
+admin.patch('/payments/:id', (req, res) => {
+  const p = db.prepare('SELECT * FROM payments WHERE id = ?').get(Number(req.params.id));
+  if (!p) throw new HttpError(404, 'Catatan pembayaran tidak ditemukan.');
+  const b = getBooking(p.booking_id);
+  const sign = p.amount < 0 ? -1 : 1;
+  const amount = intIn(req.body?.amount, 1, 100_000_000, 'Jumlah') * sign;
+  const paid_at = req.body?.paid_at ? String(req.body.paid_at) : p.paid_at;
+  if (!isDate(paid_at) || paid_at > addDays(todayStr(), 1)) throw new HttpError(400, 'Tanggal tidak valid.');
+  const note = req.body?.note !== undefined ? clean(req.body.note, 120) : p.note;
+
+  tx(() => {
+    db.prepare('UPDATE payments SET amount = ?, paid_at = ?, note = ? WHERE id = ?').run(amount, paid_at, note, p.id);
+    // Jika ini adalah satu-satunya pembayaran DP positif pada booking, samakan juga dp_amount di booking
+    if (sign > 0 && b) {
+      const posPays = db.prepare('SELECT id FROM payments WHERE booking_id = ? AND amount > 0').all(b.id);
+      if (posPays.length === 1 && posPays[0].id === p.id && amount <= b.total) {
+        db.prepare('UPDATE bookings SET dp_amount = ? WHERE id = ?').run(amount, b.id);
+      }
+    }
+  });
+  res.json({ ok: true });
+});
+
+// Edit pengeluaran yang sudah dicatat
+admin.patch('/expenses/:id', (req, res) => {
+  const ex = db.prepare('SELECT * FROM expenses WHERE id = ?').get(Number(req.params.id));
+  if (!ex) throw new HttpError(404, 'Catatan pengeluaran tidak ditemukan.');
+  const amount = intIn(req.body?.amount, 1, 100_000_000, 'Jumlah');
+  const spent_at = req.body?.spent_at ? String(req.body.spent_at) : ex.spent_at;
+  if (!isDate(spent_at) || spent_at > addDays(todayStr(), 1)) throw new HttpError(400, 'Tanggal tidak valid.');
+  const note = req.body?.note !== undefined ? clean(req.body.note, 160) : ex.note;
+  if (ex.kind === 'other' && !note) throw new HttpError(400, 'Isi keterangan pengeluaran.');
+  db.prepare('UPDATE expenses SET amount = ?, spent_at = ?, note = ? WHERE id = ?').run(amount, spent_at, note, ex.id);
+  res.json({ ok: true });
+});
+
+// Tambah & hapus pemasukan kas non-booking (misalnya modal awal / pemasukan lain)
+admin.post('/cash-incomes', (req, res) => {
+  const amount = intIn(req.body?.amount, 1, 100_000_000, 'Jumlah');
+  const received_at = req.body?.received_at ? String(req.body.received_at) : todayStr();
+  if (!isDate(received_at) || received_at > addDays(todayStr(), 1)) throw new HttpError(400, 'Tanggal tidak valid.');
+  const note = clean(req.body?.note, 160);
+  if (!note) throw new HttpError(400, 'Isi keterangan pemasukan kas.');
+  const r = db.prepare('INSERT INTO cash_incomes(received_at, amount, note, created_at) VALUES(?,?,?,?)')
+    .run(received_at, amount, note, nowIso());
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+admin.delete('/cash-incomes/:id', (req, res) => {
+  db.prepare('DELETE FROM cash_incomes WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// Buku Kas Riil: menggabungkan seluruh arus kas masuk & keluar secara kronologis + saldo kas riil
+admin.get('/cashbook', (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : 'all';
+  const entries = [];
+
+  // 1. Pembayaran booking (uang masuk & refund)
+  const pays = db.prepare(`
+    SELECT p.id, p.booking_id, p.amount, p.paid_at AS date, p.note, p.created_at,
+           b.code AS booking_code, b.name AS guest_name, b.marketer_name
+    FROM payments p
+    JOIN bookings b ON b.id = p.booking_id
+  `).all();
+  for (const p of pays) {
+    entries.push({
+      uid: `pay-${p.id}`,
+      source: 'payment',
+      ref_id: p.id,
+      booking_id: p.booking_id,
+      date: p.date,
+      created_at: p.created_at,
+      type: p.amount >= 0 ? 'in' : 'out',
+      amount: Math.abs(p.amount),
+      title: p.amount >= 0
+        ? `Pembayaran ${p.booking_code} (${p.guest_name})`
+        : `Pengembalian dana ${p.booking_code} (${p.guest_name})`,
+      subtitle: [p.marketer_name ? `Pemasar: ${p.marketer_name}` : '', p.note].filter(Boolean).join(' • '),
+      editable: true,
+    });
+  }
+
+  // 2. Pemasukan kas non-booking
+  const extraIn = db.prepare('SELECT * FROM cash_incomes').all();
+  for (const c of extraIn) {
+    entries.push({
+      uid: `inc-${c.id}`,
+      source: 'cash_income',
+      ref_id: c.id,
+      date: c.received_at,
+      created_at: c.created_at,
+      type: 'in',
+      amount: c.amount,
+      title: 'Pemasukan kas lain',
+      subtitle: c.note,
+      editable: false,
+    });
+  }
+
+  // 3. Pengeluaran operasional & bagi hasil DP hangus
+  const exps = db.prepare(`
+    SELECT e.*, b.code AS booking_code, b.name AS booking_name
+    FROM expenses e
+    LEFT JOIN bookings b ON b.id = e.booking_id
+  `).all();
+  for (const e of exps) {
+    entries.push({
+      uid: `exp-${e.id}`,
+      source: 'expense',
+      ref_id: e.id,
+      date: e.spent_at,
+      created_at: e.created_at,
+      type: 'out',
+      amount: e.amount,
+      title: e.kind === 'marketer_share' ? 'Bagian pemasar (DP hangus)' : 'Pengeluaran',
+      subtitle: [
+        e.marketer_name ? `Pemasar: ${e.marketer_name}` : '',
+        e.booking_code ? `${e.booking_code} (${e.booking_name})` : '',
+        e.note,
+      ].filter(Boolean).join(' • '),
+      editable: true,
+    });
+  }
+
+  // 4. Komisi pemasar yang sudah dibayar
+  const comms = db.prepare(`
+    SELECT id, code, name, marketer_name, commission_paid_at, commission_paid_amount
+    FROM bookings
+    WHERE commission_paid_at IS NOT NULL AND COALESCE(commission_paid_amount, 0) > 0
+  `).all();
+  for (const c of comms) {
+    entries.push({
+      uid: `com-${c.id}`,
+      source: 'commission',
+      ref_id: c.id,
+      date: c.commission_paid_at.slice(0, 10),
+      created_at: c.commission_paid_at,
+      type: 'out',
+      amount: c.commission_paid_amount,
+      title: `Komisi pemasar: ${c.marketer_name}`,
+      subtitle: `Booking ${c.code} (${c.name})`,
+      editable: false,
+    });
+  }
+
+  // Urutkan kronologis (terlama -> terbaru) untuk menghitung saldo berjalan
+  entries.sort((a, b) => a.date.localeCompare(b.date) || a.created_at.localeCompare(b.created_at));
+
+  let runningBalance = 0;
+  let totalInAll = 0;
+  let totalOutAll = 0;
+  for (const item of entries) {
+    if (item.type === 'in') {
+      runningBalance += item.amount;
+      totalInAll += item.amount;
+    } else {
+      runningBalance -= item.amount;
+      totalOutAll += item.amount;
+    }
+    item.balance = runningBalance;
+  }
+
+  const filtered = month === 'all' ? entries : entries.filter((e) => e.date.startsWith(month));
+  const periodIn = filtered.filter((e) => e.type === 'in').reduce((s, e) => s + e.amount, 0);
+  const periodOut = filtered.filter((e) => e.type === 'out').reduce((s, e) => s + e.amount, 0);
+
+  res.json({
+    month,
+    current_balance: runningBalance,
+    total_in_all: totalInAll,
+    total_out_all: totalOutAll,
+    period_in: periodIn,
+    period_out: periodOut,
+    period_net: periodIn - periodOut,
+    entries: filtered.reverse(), // Terbaru di atas untuk tampilan UI
+  });
 });
 
 /** Perpanjang masa tunggu DP: batas baru = (batas sekarang atau saat ini, mana yang lebih akhir) + jam yang diminta. */
