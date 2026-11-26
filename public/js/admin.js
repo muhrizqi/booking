@@ -744,7 +744,16 @@
           }),
         }));
       }
-      if (item.source === 'cash_income') {
+      if (item.source === 'payment') {
+        btns.append(el('button', {
+          type: 'button', class: 'btn danger mini', text: 'Hapus',
+          onclick: async () => {
+            if (!confirm(`Hapus catatan transaksi ${item.title} sebesar ${rupiah(item.amount)}?`)) return;
+            try { await api(`/payments/${item.ref_id}`, 'DELETE'); toast('Transaksi pembayaran dihapus.'); await loadBookings(); await loadReport(); }
+            catch (err) { toast(err.message, true); }
+          },
+        }));
+      } else if (item.source === 'cash_income') {
         btns.append(el('button', {
           type: 'button', class: 'btn danger mini', text: 'Hapus',
           onclick: async () => {
