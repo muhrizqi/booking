@@ -82,7 +82,7 @@
     if (name === 'kalender') { renderCal(); renderDay(); renderBlocks(); }
     if (name === 'pemasar') loadMarketers();
     if (name === 'harga') loadPricing();
-    if (name === 'pengaturan') loadSettings();
+    if (name === 'pengaturan') { loadSettings(); loadBackups(); }
     if (name === 'pesan') loadMessages();
   }
   $$('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
@@ -138,7 +138,7 @@
     } else if (b.wa_url) {
       btns.append(el('a', { class: 'btn line', href: b.wa_url, target: '_blank', rel: 'noopener', text: 'Buka WhatsApp' }));
     }
-    if (b.status === 'pending' || b.status === 'approved') btns.append(el('button', { type: 'button', class: 'btn line', text: 'Catat pembayaran', onclick: () => paymentsModal(b) }));
+    if (b.status === 'pending' || b.status === 'approved' || b.paid > 0 || b.refunded > 0) btns.append(el('button', { type: 'button', class: 'btn line', text: b.status === 'pending' || b.status === 'approved' ? 'Catat pembayaran' : 'Uang masuk dan pengembalian', onclick: () => paymentsModal(b) }));
     if (b.status === 'pending') btns.append(el('button', { type: 'button', class: 'btn line', text: 'Perpanjang tahan', onclick: () => extendHold(b) }));
     if (b.status === 'pending' || b.status === 'approved') btns.append(el('button', { type: 'button', class: 'btn line', text: 'Ubah data', onclick: () => editModal(b) }));
     return el('article', { class: 'card', 'data-id': String(b.id) },
@@ -149,7 +149,7 @@
       el('p', { class: 'who', text: b.name }),
       b.marketer_name ? el('p', { class: 'meta' }, 'Pemasar: ', el('strong', { text: b.marketer_name })) : null,
       el('p', { class: 'meta' }, b.phone ? el('a', { href: `https://wa.me/${b.phone}`, target: '_blank', rel: 'noopener', text: `+${b.phone}` }) : 'Tanpa nomor', ` , masuk ${when(b.created_at)}`),
-      el('p', { class: 'money' }, `${fmt(b.check_in)} sampai ${fmt(b.check_out)}`, el('br'), `${b.nights} malam, ${b.guests} orang`, el('br'), `Total ${rupiah(b.total)}`, b.dp_amount ? `, DP diminta ${rupiah(b.dp_amount)}` : '', b.status === 'pending' || b.status === 'approved' ? [el('br'), `Diterima ${rupiah(b.paid)}`, b.total - b.paid > 0 ? `, sisa ${rupiah(b.total - b.paid)}` : ', lunas'] : ''),
+      el('p', { class: 'money' }, `${fmt(b.check_in)} sampai ${fmt(b.check_out)}`, el('br'), `${b.nights} malam, ${b.guests} orang`, el('br'), `Total ${rupiah(b.total)}`, b.dp_amount ? `, DP diminta ${rupiah(b.dp_amount)}` : '', b.status === 'pending' || b.status === 'approved' ? [el('br'), `Diterima ${rupiah(b.paid)}`, b.total - b.paid > 0 ? `, sisa ${rupiah(b.total - b.paid)}` : ', lunas'] : (b.paid > 0 || b.refunded > 0 ? [el('br'), `Uang masuk ${rupiah(b.paid + b.refunded)}, dikembalikan ${rupiah(b.refunded)}, ditahan ${rupiah(b.paid)}`] : '')),
       b.status === 'pending' && b.hold_until_eff ? el('p', { class: `hold${b.expired ? ' late' : ''}` , text: b.expired ? `Masa tunggu habis ${when(b.hold_until_eff)}. Tanggal sudah dilepas.` : `Tanggal ditahan sampai ${when(b.hold_until_eff)}` }) : null,
       commissionLine(b),
       b.note ? el('p', { class: 'note', text: b.note }) : null,
@@ -162,6 +162,9 @@
     let body = {};
     if (action === 'approve') {
       if (!confirm(`Terima booking ${b.code} atas nama ${b.name}?\n\nPastikan DP sudah masuk. Bila belum ada pembayaran tercatat, DP ${rupiah(b.dp_amount)} dicatat sebagai uang masuk (jumlah lain: pakai Catat pembayaran lebih dulu). Penyewa akan menerima WhatsApp berisi aturan check-in dan check-out.`)) return;
+    } else if (b.paid > 0) {
+      refundModal(b, action);
+      return;
     } else {
       const reason = prompt(action === 'reject' ? `Alasan menolak ${b.code} (boleh dikosongkan):` : `Keterangan pembatalan ${b.code} (boleh dikosongkan):`);
       if (reason === null) return;
@@ -474,6 +477,38 @@
     openModal('Ubah data booking', form);
   }
 
+  function refundModal(b, action) {
+    const verb = action === 'reject' ? 'Tolak' : 'Batalkan';
+    const amount = el('input', { id: 'rf-amount', inputmode: 'numeric', value: '0' });
+    const reason = el('input', { id: 'rf-reason', maxlength: 200, placeholder: 'Boleh dikosongkan' });
+    const keep = el('p', { class: 'meta' });
+    const upd = () => { const n = Number(digits(amount.value)) || 0; keep.textContent = n > b.paid ? 'Melebihi uang yang diterima.' : n === b.paid ? 'Semua uang dikembalikan, tidak ada DP yang ditahan.' : n === 0 ? `Tidak ada pengembalian. ${rupiah(b.paid)} ditahan sebagai pemasukan (DP hangus).` : `${rupiah(n)} dikembalikan, ${rupiah(b.paid - n)} ditahan sebagai pemasukan.`; };
+    amount.addEventListener('input', upd); upd();
+    const quick = el('div', { class: 'btns-row' },
+      el('button', { type: 'button', class: 'btn line mini', text: 'Tidak dikembalikan', onclick: () => { amount.value = '0'; upd(); } }),
+      el('button', { type: 'button', class: 'btn line mini', text: 'Kembalikan semua', onclick: () => { amount.value = String(b.paid); upd(); } }),
+      el('button', { type: 'button', class: 'btn line mini', text: 'Kembalikan separuh', onclick: () => { amount.value = String(Math.floor(b.paid / 2)); upd(); } }));
+    const form = el('form', {},
+      el('p', { class: 'catatan', text: `${b.code} atas nama ${b.name}. Uang yang sudah diterima: ${rupiah(b.paid)}.` }),
+      field('rf-amount', 'Dikembalikan ke customer (Rp)', amount, 'Isi 0 bila DP tidak dikembalikan. Jumlah ini dicatat sebagai uang keluar.'),
+      quick, keep,
+      field('rf-reason', action === 'reject' ? 'Alasan menolak' : 'Keterangan pembatalan', reason, 'Ikut dikirim ke customer lewat WhatsApp.'),
+      el('button', { class: `btn ${action === 'reject' ? 'danger' : ''}`, type: 'submit', text: `${verb} booking` })
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const n = Number(digits(amount.value)) || 0;
+      if (n > b.paid) { toast('Pengembalian melebihi uang yang diterima.', true); return; }
+      try {
+        const data = await api(`/bookings/${b.id}/${action}`, 'POST', { reason: reason.value, refund: String(n) });
+        closeModal();
+        await loadBookings(); renderBookings();
+        toast(data.wa_provider === 'none' && b.phone ? 'Berhasil. WhatsApp otomatis belum aktif, kirim pesannya lewat tombol WhatsApp di kartu booking.' : `Booking ${action === 'reject' ? 'ditolak' : 'dibatalkan'}${n ? `, pengembalian ${rupiah(n)} dicatat` : ''}.`);
+      } catch (err) { toast(err.message, true); }
+    });
+    openModal(`${verb} booking yang sudah dibayar`, form);
+  }
+
   async function paymentsModal(b) {
     let d;
     try { d = await api(`/bookings/${b.id}/payments`); } catch (err) { toast(err.message, true); return; }
@@ -483,7 +518,7 @@
     const note = el('input', { id: 'pay-note', maxlength: 120, placeholder: 'Misalnya: transfer BSI, pelunasan' });
     const list = d.payments.length
       ? el('ul', { class: 'pay-list' }, d.payments.map((p) => el('li', {},
-          el('span', {}, `${fmt(p.paid_at)}: `, el('strong', { text: rupiah(p.amount) }), p.note ? ` (${p.note})` : ''),
+          el('span', {}, `${fmt(p.paid_at)}: `, el('strong', { text: p.amount < 0 ? `Keluar ${rupiah(-p.amount)}` : rupiah(p.amount) }), p.note ? ` (${p.note})` : ''),
           el('button', { type: 'button', class: 'btn danger mini', text: 'Hapus', onclick: async () => {
             if (!confirm(`Hapus catatan pembayaran ${rupiah(p.amount)}?`)) return;
             try { await api(`/payments/${p.id}`, 'DELETE'); await loadBookings(); renderBookings(); paymentsModal(b); } catch (err) { toast(err.message, true); }
@@ -503,11 +538,28 @@
         await loadBookings(); renderBookings(); paymentsModal(b);
       } catch (err) { toast(err.message, true); }
     });
+    const rfAmount = el('input', { id: 'rfp-amount', inputmode: 'numeric', placeholder: 'Jumlah (Rp)', value: d.paid > 0 ? String(d.paid) : '' });
+    const rfNote = el('input', { id: 'rfp-note', maxlength: 120, placeholder: 'Misalnya: transfer balik ke BSI' });
+    const rfForm = el('form', {},
+      el('h3', { text: 'Catat pengembalian dana' }),
+      field('rfp-amount', 'Jumlah dikembalikan (Rp)', rfAmount, 'Uang keluar ke customer. Tidak bisa melebihi uang yang diterima.'),
+      field('rfp-note', 'Catatan', rfNote),
+      el('button', { class: 'btn line', type: 'submit', text: 'Simpan pengembalian' })
+    );
+    rfForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api(`/bookings/${b.id}/refunds`, 'POST', { amount: digits(rfAmount.value), note: rfNote.value });
+        toast('Pengembalian dicatat.');
+        await loadBookings(); renderBookings(); paymentsModal(b);
+      } catch (err) { toast(err.message, true); }
+    });
+    const open_ = b.status === 'pending' || b.status === 'approved';
     openModal(`Pembayaran ${b.code}`,
       el('p', { class: 'meta', text: `${b.name}${b.marketer_name ? `, pemasar ${b.marketer_name}` : ''}` }),
       el('div', { class: 'pay-sum' }, el('span', { text: `Total ${rupiah(d.total)}` }), el('span', { text: `DP diminta ${rupiah(d.dp_amount)}` }),
-        el('strong', { text: `Diterima ${rupiah(d.paid)}` }), el('span', { text: sisa ? `Sisa ${rupiah(sisa)}` : 'Lunas' })),
-      list, form);
+        el('strong', { text: `Tercatat ${rupiah(d.paid)}` }), open_ ? el('span', { text: sisa ? `Sisa ${rupiah(sisa)}` : 'Lunas' }) : null),
+      list, open_ ? form : null, d.paid > 0 ? rfForm : null);
   }
 
   async function extendHold(b) {
@@ -531,6 +583,7 @@
       sel.replaceChildren(...opts.map((m) => el('option', { value: m, text: monthLabel(m) })));
       sel.value = r.month;
       renderReport(r);
+      loadExpenses().catch(() => {});
     } catch (err) { toast(err.message, true); }
   }
   $('#rp-month').addEventListener('change', loadReport);
@@ -542,16 +595,121 @@
       el('dl', { class: 'rp-grid' },
         row('Booking diterima', `${g.bookings} (${g.nights} malam)`), row('Nilai booking', rupiah(g.value), true),
         row('Uang diterima', rupiah(g.received)), row('Belum dibayar', rupiah(g.outstanding)),
-        r.commission_percent > 0 && g.commission != null ? [row(`Komisi ${r.commission_percent}%`, rupiah(g.commission)), row('Komisi sudah dibayar', rupiah(g.commission_paid)), row('Setelah komisi', rupiah(g.net), true)] : ''),
+        g.forfeited ? [row('DP hangus (booking batal)', rupiah(g.forfeited)), row('Total pemasukan', rupiah(g.received + g.forfeited), true)] : '',
+        r.commission_percent > 0 && g.commission != null ? [row(`Komisi ${r.commission_percent}%`, rupiah(g.commission)), row('Komisi sudah dibayar', rupiah(g.commission_paid)), row('Setelah komisi', rupiah(g.net), true)] : '',
+        g.share ? row('Bagian DP hangus untuk pemasar', rupiah(g.share)) : '',
+        g.other_expenses ? row('Pengeluaran lain', rupiah(g.other_expenses)) : '',
+        g.share || g.other_expenses || g.forfeited ? row('Perkiraan bersih', rupiah(g.income_net), true) : ''),
       extra);
     const rows = r.rows;
     $('#report').replaceChildren(
       card(`Total ${monthLabel(r.month)}`, t),
-      el('p', { class: 'catatan', text: `Uang masuk yang tercatat pada periode ini (berdasarkan tanggal bayar): ${rupiah(r.cash_in)}.${r.received_on_cancelled ? ` Termasuk ${rupiah(r.received_on_cancelled)} dari booking yang ditolak atau dibatalkan, yang perlu dikembalikan atau diputuskan.` : ''}` }),
+      el('p', { class: 'catatan', text: `Uang masuk yang tercatat pada periode ini (berdasarkan tanggal bayar): ${rupiah(r.cash_in)}.${r.refunded ? ` Pengembalian dana ke customer pada periode ini: ${rupiah(r.refunded)}.` : ''} DP hangus dari booking batal tetap dihitung sebagai pemasukan, tanpa komisi pemasar.` }),
       el('h2', { text: 'Per pemasar' }),
       ...(rows.length ? rows.map((g) => card(g.name, g)) : [el('p', { class: 'empty', text: 'Belum ada booking diterima pada periode ini.' })])
     );
   }
+
+  // ---------- Pengeluaran ----------
+  const EX_KIND = { marketer_share: 'Bagian pemasar dari DP hangus', other: 'Pengeluaran lain' };
+  let forfeitedList = [];
+
+  function syncExForm() {
+    const share = $('#ex-kind').value === 'marketer_share';
+    $('#ex-booking-field').hidden = !share;
+    $('#ex-note').placeholder = share ? 'Boleh dikosongkan' : 'Wajib diisi, misalnya: beli perlengkapan';
+    const sel = $('#ex-booking');
+    const b = forfeitedList.find((x) => String(x.id) === sel.value);
+    $('#ex-hint').textContent = b ? `${b.marketer_name}: DP hangus ${rupiah(b.kept)}, sudah dibagikan ${rupiah(b.shared)}, sisa ${rupiah(b.kept - b.shared)}.` : 'Belum ada booking batal dengan DP hangus yang punya pemasar.';
+  }
+
+  async function loadExpenses() {
+    const month = $('#rp-month').value || 'all';
+    const [{ expenses }, { bookings }] = await Promise.all([api(`/expenses?month=${month}`), api('/forfeited')]);
+    forfeitedList = bookings.filter((b) => b.kept - b.shared > 0);
+    const sel = $('#ex-booking');
+    const prev = sel.value;
+    sel.replaceChildren(...forfeitedList.map((b) => el('option', { value: String(b.id), text: `${b.code}, ${b.name} (pemasar ${b.marketer_name}), sisa ${rupiah(b.kept - b.shared)}` })));
+    if (forfeitedList.some((b) => String(b.id) === prev)) sel.value = prev;
+    if (!$('#ex-date').value) $('#ex-date').value = todayWIB();
+    syncExForm();
+    const list = $('#ex-list');
+    if (!expenses.length) { list.replaceChildren(el('p', { class: 'empty', text: 'Belum ada pengeluaran tercatat pada periode ini.' })); return; }
+    const total = expenses.reduce((a, e) => a + e.amount, 0);
+    list.replaceChildren(
+      el('p', { class: 'catatan', text: `Total pengeluaran periode ini: ${rupiah(total)}.` }),
+      ...expenses.map((e) => el('article', { class: 'card' },
+        el('div', { class: 'card-top' }, el('strong', { text: rupiah(e.amount) }), el('span', { class: 'meta', text: fmt(e.spent_at) })),
+        el('p', { class: 'who', text: EX_KIND[e.kind] || e.kind }),
+        el('p', { class: 'meta', text: [e.marketer_name && `Pemasar ${e.marketer_name}`, e.booking_code && `Booking ${e.booking_code} (${e.booking_name})`, e.note].filter(Boolean).join(', ') }),
+        el('div', { class: 'btns' }, el('button', { type: 'button', class: 'btn danger mini', text: 'Hapus', onclick: async () => {
+          if (!confirm(`Hapus catatan pengeluaran ${rupiah(e.amount)}?`)) return;
+          try { await api(`/expenses/${e.id}`, 'DELETE'); toast('Pengeluaran dihapus.'); await loadReport(); } catch (err) { toast(err.message, true); }
+        } }))
+      ))
+    );
+  }
+  $('#ex-kind').addEventListener('change', syncExForm);
+  $('#ex-booking').addEventListener('change', syncExForm);
+  $('#ex-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const share = $('#ex-kind').value === 'marketer_share';
+    try {
+      await api('/expenses', 'POST', { kind: $('#ex-kind').value, booking_id: share ? $('#ex-booking').value : undefined, amount: digits($('#ex-amount').value), spent_at: $('#ex-date').value, note: $('#ex-note').value });
+      $('#ex-amount').value = ''; $('#ex-note').value = '';
+      const month = $('#rp-month').value;
+      const dt = $('#ex-date').value || todayWIB();
+      const outside = !share && month !== 'all' && dt.slice(0, 7) !== month;
+      toast(outside ? `Pengeluaran dicatat pada ${monthLabel(dt.slice(0, 7))}. Ganti periode untuk melihatnya.` : 'Pengeluaran dicatat.');
+      await loadReport();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  // ---------- Cadangan ----------
+  const sizeLabel = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  async function afterRestore(r) {
+    toast(`Data dipulihkan (${r.bookings} booking). Data sebelumnya disimpan sebagai ${r.safety}. Memuat ulang...`);
+    setTimeout(() => location.reload(), 1500);
+  }
+  async function confirmRestore(what) {
+    const t = prompt(`Pulihkan data dari ${what}?\n\nSemua data sekarang akan diganti. Data sekarang disimpan dulu sebagai cadangan "sebelum-restore".\n\nKetik PULIHKAN untuk melanjutkan:`);
+    return t !== null && t.trim().toUpperCase() === 'PULIHKAN';
+  }
+
+  async function loadBackups() {
+    try {
+      const { backups } = await api('/backups');
+      const box = $('#bk-list');
+      if (!backups.length) { box.replaceChildren(el('p', { class: 'empty', text: 'Belum ada cadangan di server.' })); return; }
+      box.replaceChildren(...backups.map((b) => el('article', { class: 'card' },
+        el('div', { class: 'card-top' }, el('strong', { text: b.name }), el('span', { class: 'chip', text: b.kind })),
+        el('p', { class: 'meta', text: `${when(b.modified)}, ${sizeLabel(b.size)}` }),
+        el('div', { class: 'btns' },
+          el('a', { class: 'btn line mini', href: `/api/admin/backups/${encodeURIComponent(b.name)}`, download: b.name, text: 'Unduh' }),
+          el('button', { type: 'button', class: 'btn danger mini', text: 'Pulihkan', onclick: async () => {
+            if (!(await confirmRestore(b.name))) return;
+            try { afterRestore(await api(`/backups/${encodeURIComponent(b.name)}/restore`, 'POST')); } catch (e) { toast(e.message, true); }
+          } }),
+          el('button', { type: 'button', class: 'btn line mini', text: 'Hapus', onclick: async () => {
+            if (!confirm(`Hapus ${b.name} dari server?`)) return;
+            try { await api(`/backups/${encodeURIComponent(b.name)}`, 'DELETE'); loadBackups(); } catch (e) { toast(e.message, true); }
+          } })
+        ))));
+    } catch (e) { toast(e.message, true); }
+  }
+
+  $('#bk-download').addEventListener('click', () => setTimeout(loadBackups, 1500));
+  $('#bk-restore').addEventListener('click', async () => {
+    const f = $('#bk-file').files[0];
+    if (!f) { toast('Pilih file cadangan (.db) dulu.', true); return; }
+    const post = (path) => fetch('/api/admin' + path, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f })
+      .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'Gagal.'); return d; });
+    try {
+      const info = await post('/restore?check=1');
+      if (!(await confirmRestore(`${f.name} (${info.bookings} booking, ${info.marketers} pemasar)`))) return;
+      afterRestore(await post('/restore'));
+    } catch (e) { toast(e.message, true); }
+  });
 
   // ---------- Pemasar ----------
   async function loadMarketers() {

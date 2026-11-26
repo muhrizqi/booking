@@ -126,6 +126,29 @@
           <p class="catatan">Laporan menghitung booking yang sudah diterima. "Diterima" adalah uang yang sudah dicatat lewat Catat pembayaran di kartu booking.</p>
         </div>
         <div id="report"></div>
+
+        <h2>Pengeluaran</h2>
+        <form id="ex-form" class="panel">
+          <div class="field">
+            <label for="ex-kind">Jenis</label>
+            <select id="ex-kind">
+              <option value="marketer_share">Bagian pemasar dari DP hangus</option>
+              <option value="other">Pengeluaran lain</option>
+            </select>
+          </div>
+          <div class="field" id="ex-booking-field">
+            <label for="ex-booking">Booking batal</label>
+            <select id="ex-booking"></select>
+            <small id="ex-hint">Pilih booking batal yang DP-nya ditahan. Pemasarnya terisi otomatis.</small>
+          </div>
+          <div class="two">
+            <div class="field"><label for="ex-amount">Jumlah (Rp)</label><input id="ex-amount" inputmode="numeric" required></div>
+            <div class="field"><label for="ex-date">Tanggal</label><input id="ex-date" type="date"></div>
+          </div>
+          <div class="field"><label for="ex-note">Keterangan</label><input id="ex-note" maxlength="160" placeholder="Misalnya: transfer ke pemasar, beli perlengkapan"></div>
+          <button class="btn" type="submit">Catat pengeluaran</button>
+        </form>
+        <div id="ex-list"></div>
       </section>
 
       <section id="tab-harga" role="tabpanel" hidden>
@@ -254,6 +277,21 @@
           </div>
           <button class="btn block" type="submit">Simpan pengaturan</button>
         </form>
+        <h2>Cadangan data</h2>
+        <div class="panel" id="backup-panel">
+          <p class="catatan">Cadangan berisi semua data (booking, pembayaran, pemasar, pengaturan, termasuk kunci WhatsApp). Simpan di tempat yang aman. Aplikasi juga membuat cadangan otomatis tiap hari di folder data dan menyimpan 7 terakhir.</p>
+          <div class="btns-row">
+            <a class="btn" id="bk-download" href="/api/admin/backup" download>Unduh cadangan sekarang</a>
+          </div>
+          <div class="field">
+            <label for="bk-file">Pulihkan dari file cadangan (.db)</label>
+            <input id="bk-file" type="file" accept=".db,application/octet-stream">
+            <small>Pemulihan mengganti semua data sekarang dengan isi file. Data sekarang disimpan dulu sebagai "sebelum-restore" supaya bisa dikembalikan.</small>
+          </div>
+          <button class="btn danger" id="bk-restore" type="button">Pulihkan dari file</button>
+          <h3 style="margin-top:1.2rem">Cadangan di server</h3>
+          <div id="bk-list"></div>
+        </div>
         <p style="margin-top:2rem"><button class="btn line" id="logout" type="button">Keluar</button></p>
       </section>
 

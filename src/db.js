@@ -118,6 +118,19 @@ if (!hadPayments) {
            SELECT id, dp_amount, substr(COALESCE(decided_at, created_at), 1, 10), 'DP (data sebelum fitur keuangan)', COALESCE(decided_at, created_at)
            FROM bookings WHERE status = 'approved' AND dp_amount > 0`);
 }
+// Pengeluaran: bagian pemasar dari DP hangus (kind = 'marketer_share', terkait booking batal) dan pengeluaran lain.
+db.exec(`CREATE TABLE IF NOT EXISTS expenses (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  spent_at      TEXT NOT NULL,
+  amount        INTEGER NOT NULL,
+  kind          TEXT NOT NULL DEFAULT 'other',
+  marketer_id   INTEGER,
+  marketer_name TEXT NOT NULL DEFAULT '',
+  booking_id    INTEGER,
+  note          TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_booking ON expenses(booking_id);`);
 const marketerCols = db.prepare('PRAGMA table_info(marketers)').all().map((c) => c.name);
 for (const c of ['bank_name', 'bank_account', 'bank_holder'])
   if (!marketerCols.includes(c)) db.exec(`ALTER TABLE marketers ADD COLUMN ${c} TEXT NOT NULL DEFAULT ''`);

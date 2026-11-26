@@ -91,6 +91,8 @@ Untuk dipakai para pemasar, harga bisa disembunyikan: **Admin → Pengaturan →
 ## Pembayaran, edit data, dan keuangan
 
 - **Catat pembayaran** (kartu booking): catat DP, tambahan DP, atau pelunasan dengan tanggal dan catatan. Customer yang membayar lebih dari DP yang diminta cukup dicatat sesuai jumlah sebenarnya. Kartu menampilkan "Diterima" dan "sisa". Saat booking diterima tanpa pembayaran tercatat, DP yang diminta otomatis dicatat.
+- **Batal atau tolak booking yang sudah dibayar**: muncul jendela untuk mengisi jumlah yang dikembalikan ke customer (0 = DP tidak dikembalikan, ada tombol cepat untuk kembalikan semua atau separuh). Pengembalian dicatat sebagai uang keluar dan jumlahnya ikut dikirim di WhatsApp pembatalan. Pengembalian juga bisa dicatat menyusul lewat "Uang masuk dan pengembalian" di kartu booking. DP yang ditahan masuk laporan sebagai "DP hangus" (pemasukan, tanpa komisi pemasar).
+- **Pengeluaran** (tab Keuangan, bagian bawah): catat "Bagian pemasar dari DP hangus" (pilih booking batal yang DP-nya ditahan; pemasar terisi otomatis; jumlah ditentukan admin dan tidak boleh melebihi sisa DP hangus) atau "Pengeluaran lain" (wajib diberi keterangan). Laporan menampilkan bagian pemasar per pemasar, pengeluaran lain di total, dan "Perkiraan bersih" = uang diterima + DP hangus - komisi - bagian pemasar - pengeluaran lain.
 - **Ubah data**: nama, WhatsApp, jumlah tamu, pemasar, total, DP yang diminta, dan catatan. Tanggal tidak diubah di sini (batalkan lalu buat baru).
 - **Perpanjang tahan**: pada booking yang menunggu, tambah masa tunggu DP (jam) dari batas sekarang. Bila masa tunggu sudah habis, bisa diperpanjang selama tanggalnya belum diambil orang lain.
 - **Tab Keuangan**: per bulan check-in (atau semua waktu): nilai booking, uang diterima, belum dibayar, komisi, dan nilai setelah komisi, dipisah per pemasar dan "Tanpa pemasar". Uang yang masuk dari booking batal atau ditolak ditandai terpisah.
@@ -122,6 +124,14 @@ Dockerfile           untuk Coolify
 
 Database sudah memakai tabel `units`: setiap booking dan blokir terikat ke `unit_id`, dan API menerima parameter `unit`. Menambah unit guest house atau kamar hotel tinggal menambah antarmuka pemilih unit di halaman publik dan admin. Fitur lain (channel manager OTA, payment gateway, housekeeping, POS, laporan) bisa ditambahkan sebagai tabel dan menu baru tanpa mengubah alur yang ada.
 
-## Backup
+## Cadangan dan pemulihan (di panel admin)
+
+Admin → Pengaturan → **Cadangan data**:
+- **Unduh cadangan sekarang**: mengunduh file `.db` yang utuh (salinan konsisten, aman walau ada yang sedang memesan).
+- **Pulihkan dari file**: unggah file `.db`; diperiksa dulu (bukan file rusak/asing), lalu harus mengetik PULIHKAN. Data sekarang otomatis disimpan sebagai `sebelum-restore-*` sehingga pemulihan bisa dibatalkan. File dari versi aplikasi yang lebih lama juga bisa dipulihkan.
+- Aplikasi membuat cadangan otomatis tiap hari di `DATA_DIR/backups` (7 terakhir), tampil di daftar "Cadangan di server" lengkap dengan Unduh, Pulihkan, dan Hapus.
+- Cadangan memuat semua data, termasuk kunci WhatsApp. Simpan di tempat aman. Cadangan di server ikut volume, jadi tetap unduh ke komputer untuk jaga-jaga bila volume hilang.
+
+## Backup (manual lewat server)
 
 Seluruh data ada di `/data/guesthouse.db`. Gunakan fitur backup volume Coolify, atau salin file tersebut (beserta `guesthouse.db-wal` bila ada) secara berkala.

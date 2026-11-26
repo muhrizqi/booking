@@ -8,6 +8,8 @@ import {
   HttpError, allow, todayStr, isDate, addDays, diffDays, normalizePhone, makeCode, rupiah,
 } from './src/util.js';
 import { quote, assertMinNights, priceMap, nightlyPrices, parseWeekendDays } from './src/pricing.js';
+import { saveBackup, listBackups, validName, backupDir, restoreFrom, inspectBackup, autoBackup } from './src/backup.js';
+import fs from 'node:fs';
 import { adminNewBookingMsg, guestToAdminMsg, guestMsg, commissionDigestMsg, ruleLines, mapsUrl } from './src/messages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -240,6 +242,7 @@ function adminBooking(b, s, base, unitsById) {
     commission: b.marketer_id && commissionPct(s) > 0 ? b.commission_paid_amount ?? commissionOf(b, s) : null,
     commission_percent: commissionPct(s),
     paid: paidOf(b.id),
+    refunded: db.prepare('SELECT COALESCE(-SUM(amount),0) n FROM payments WHERE booking_id = ? AND amount < 0').get(b.id).n,
     hold_until_eff: b.status === 'pending' ? [new Date(new Date(b.created_at).getTime() + Number(s.pending_hours || 24) * 3600e3).toISOString(), b.hold_until || ''].sort().pop() : null,
     unit_name: unitsById[b.unit_id]?.name || '-',
     expired: b.status === 'pending' && !isHeld(b, s),
@@ -554,6 +557,20 @@ admin.post('/bookings/:id/payments', (req, res) => {
   res.status(201).json({ id: r.lastInsertRowid });
 });
 
+/** Catat pengembalian dana (uang keluar) untuk booking mana pun yang masih punya saldo diterima. */
+admin.post('/bookings/:id/refunds', (req, res) => {
+  const b = getBooking(Number(req.params.id));
+  if (!b) throw new HttpError(404, 'Booking tidak ditemukan.');
+  const amount = intIn(req.body?.amount, 1, 100_000_000, 'Jumlah');
+  const net = paidOf(b.id);
+  if (amount > net) throw new HttpError(400, `Pengembalian melebihi uang yang diterima (${rupiah(net)}).`);
+  const paid_at = req.body?.paid_at ? String(req.body.paid_at) : todayStr();
+  if (!isDate(paid_at) || paid_at > addDays(todayStr(), 1)) throw new HttpError(400, 'Tanggal tidak valid.');
+  const r = db.prepare('INSERT INTO payments(booking_id, amount, paid_at, note, created_at) VALUES(?,?,?,?,?)')
+    .run(b.id, -amount, paid_at, clean(req.body?.note, 120) || 'Pengembalian dana', nowIso());
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
 admin.delete('/payments/:id', (req, res) => {
   db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
@@ -578,6 +595,60 @@ admin.post('/bookings/:id/extend', (req, res) => {
   res.json({ hold_until: out });
 });
 
+/** Uang yang ditahan dari booking batal/ditolak (DP hangus) dan bagian pemasar yang sudah dikeluarkan. */
+const keptOf = (id) => db.prepare('SELECT COALESCE(SUM(amount),0) n FROM payments WHERE booking_id = ?').get(id).n;
+const sharedOf = (id) => db.prepare(`SELECT COALESCE(SUM(amount),0) n FROM expenses WHERE booking_id = ? AND kind = 'marketer_share'`).get(id).n;
+
+admin.get('/forfeited', (req, res) => {
+  const rows = db.prepare(`SELECT id, code, name, check_in, marketer_id, marketer_name FROM bookings WHERE status IN ('cancelled','rejected') AND marketer_id IS NOT NULL ORDER BY id DESC`).all();
+  res.json({
+    bookings: rows.map((b) => ({ ...b, kept: keptOf(b.id), shared: sharedOf(b.id) })).filter((b) => b.kept > 0),
+  });
+});
+
+admin.get('/expenses', (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : 'all';
+  const rows = db.prepare(
+    `SELECT e.*, b.code AS booking_code, b.name AS booking_name FROM expenses e LEFT JOIN bookings b ON b.id = e.booking_id
+     WHERE ${month === 'all' ? '1=1' : `substr(CASE WHEN e.booking_id IS NOT NULL THEN b.check_in ELSE e.spent_at END, 1, 7) = '${month}'`}
+     ORDER BY e.spent_at DESC, e.id DESC LIMIT 300`
+  ).all();
+  res.json({ expenses: rows });
+});
+
+admin.post('/expenses', (req, res) => {
+  const x = req.body || {};
+  const kind = x.kind === 'marketer_share' ? 'marketer_share' : 'other';
+  const amount = intIn(x.amount, 1, 100_000_000, 'Jumlah');
+  const spent_at = x.spent_at ? String(x.spent_at) : todayStr();
+  if (!isDate(spent_at) || spent_at > addDays(todayStr(), 1)) throw new HttpError(400, 'Tanggal tidak valid.');
+  const note = clean(x.note, 160);
+  let marketer = null, bookingId = null;
+  if (kind === 'marketer_share') {
+    const b = getBooking(Number(x.booking_id));
+    if (!b || !['cancelled', 'rejected'].includes(b.status) || !b.marketer_id)
+      throw new HttpError(400, 'Pilih booking batal yang punya pemasar.');
+    const left = keptOf(b.id) - sharedOf(b.id);
+    if (left <= 0) throw new HttpError(400, 'Booking ini tidak punya DP hangus tersisa untuk dibagi.');
+    if (amount > left) throw new HttpError(400, `Bagian pemasar melebihi DP hangus yang tersisa (${rupiah(left)}).`);
+    bookingId = b.id;
+    marketer = { id: b.marketer_id, name: b.marketer_name };
+  } else if (x.marketer_id) {
+    const m = db.prepare('SELECT id, name FROM marketers WHERE id = ?').get(Number(x.marketer_id));
+    if (!m) throw new HttpError(400, 'Pemasar tidak ditemukan.');
+    marketer = m;
+  }
+  if (kind === 'other' && !note) throw new HttpError(400, 'Isi keterangan pengeluaran.');
+  const r = db.prepare('INSERT INTO expenses(spent_at, amount, kind, marketer_id, marketer_name, booking_id, note, created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(spent_at, amount, kind, marketer?.id ?? null, marketer?.name ?? '', bookingId, note, nowIso());
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+admin.delete('/expenses/:id', (req, res) => {
+  db.prepare('DELETE FROM expenses WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
 /** Laporan per pemasar. Dasar: booking diterima yang check-in-nya jatuh di bulan itu ("all" = semua). */
 admin.get('/report', (req, res) => {
   const s = getSettings();
@@ -600,18 +671,93 @@ admin.get('/report', (req, res) => {
       if (b.commission_paid_at) g.commission_paid += c;
     }
   }
-  const list = [...groups.values()].map((g) => ({ ...g, outstanding: g.value - g.received, net: g.value - g.commission })).sort((a, b) => b.value - a.value);
-  const sum = (k) => list.reduce((a, g) => a + g[k], 0);
   const cashIn = db.prepare(`SELECT COALESCE(SUM(amount),0) n FROM payments WHERE ${inScope('paid_at')}`).get().n;
+  // Booking batal atau ditolak: uang yang tetap ditahan (DP hangus) menjadi pemasukan; pengembalian dicatat terpisah.
   const dead = db.prepare(
-    `SELECT COALESCE(SUM(p.amount),0) n FROM payments p JOIN bookings b ON b.id = p.booking_id WHERE b.status IN ('cancelled','rejected') AND ${inScope('p.paid_at')}`
-  ).get().n;
+    `SELECT b.marketer_id, b.marketer_name,
+            COALESCE((SELECT SUM(amount) FROM payments p WHERE p.booking_id = b.id AND p.amount > 0), 0) AS got,
+            COALESCE((SELECT -SUM(amount) FROM payments p WHERE p.booking_id = b.id AND p.amount < 0), 0) AS back
+     FROM bookings b WHERE b.status IN ('cancelled','rejected') AND ${inScope('b.check_in')}`
+  ).all();
+  let forfeitedTotal = 0, refundedTotal = 0;
+  for (const x of dead) {
+    const kept = x.got - x.back;
+    refundedTotal += x.back;
+    if (kept <= 0) continue;
+    forfeitedTotal += kept;
+    const key = x.marketer_id ?? 0;
+    if (!groups.has(key)) groups.set(key, { marketer_id: x.marketer_id, name: x.marketer_id ? x.marketer_name : 'Tanpa pemasar', bookings: 0, nights: 0, value: 0, received: 0, commission: 0, commission_paid: 0 });
+    groups.get(key).forfeited = (groups.get(key).forfeited || 0) + kept;
+  }
+  // Pengeluaran: bagian pemasar yang terkait booking dihitung di bulan check-in booking itu, sisanya menurut tanggal bayar.
+  const exps = db.prepare(
+    `SELECT e.* FROM expenses e LEFT JOIN bookings b ON b.id = e.booking_id
+     WHERE ${month === 'all' ? '1=1' : `substr(CASE WHEN e.booking_id IS NOT NULL THEN b.check_in ELSE e.spent_at END, 1, 7) = '${month}'`}`
+  ).all();
+  let otherExpenses = 0;
+  for (const e of exps) {
+    if (e.kind === 'marketer_share' && e.marketer_id) {
+      const key = e.marketer_id;
+      if (!groups.has(key)) groups.set(key, { marketer_id: e.marketer_id, name: e.marketer_name, bookings: 0, nights: 0, value: 0, received: 0, commission: 0, commission_paid: 0 });
+      groups.get(key).share = (groups.get(key).share || 0) + e.amount;
+    } else otherExpenses += e.amount;
+  }
+  const list = [...groups.values()].map((g) => {
+    const share = g.share || 0, forfeited = g.forfeited || 0;
+    return { ...g, forfeited, share, outstanding: g.value - g.received, net: g.value - g.commission, income_net: g.received + forfeited - g.commission - share };
+  }).sort((a, b) => b.value - a.value);
+  const sum = (k) => list.reduce((a, g) => a + g[k], 0);
   res.json({
     month, months, commission_percent: commissionPct(s), rows: list,
-    totals: { bookings: sum('bookings'), nights: sum('nights'), value: sum('value'), received: sum('received'), outstanding: sum('outstanding'), commission: sum('commission'), commission_paid: sum('commission_paid'), net: sum('net') },
-    cash_in: cashIn, received_on_cancelled: dead,
+    totals: { bookings: sum('bookings'), nights: sum('nights'), value: sum('value'), received: sum('received'), outstanding: sum('outstanding'), commission: sum('commission'), commission_paid: sum('commission_paid'), net: sum('net'), forfeited: forfeitedTotal, share: sum('share'), other_expenses: otherExpenses, income_net: sum('income_net') - otherExpenses },
+    cash_in: cashIn, refunded: refundedTotal,
   });
 });
+
+// ---------- Cadangan dan pemulihan database ----------
+admin.get('/backup', (req, res, next) => {
+  const name = saveBackup('manual-');
+  res.download(path.join(backupDir, name), `guesthouse-${name.replace(/^manual-/, '')}`, (err) => { if (err) next(err); });
+});
+
+admin.get('/backups', (req, res) => res.json({ backups: listBackups(), persistent: dbInfo.persistent }));
+
+admin.get('/backups/:name', (req, res, next) => {
+  if (!validName(req.params.name)) throw new HttpError(404, 'File tidak ditemukan.');
+  const file = path.join(backupDir, req.params.name);
+  if (!fs.existsSync(file)) throw new HttpError(404, 'File tidak ditemukan.');
+  res.download(file, req.params.name, (err) => { if (err) next(err); });
+});
+
+admin.delete('/backups/:name', (req, res) => {
+  if (!validName(req.params.name)) throw new HttpError(404, 'File tidak ditemukan.');
+  fs.rmSync(path.join(backupDir, req.params.name), { force: true });
+  res.json({ ok: true });
+});
+
+function doRestore(file) {
+  try { return restoreFrom(file); }
+  catch (e) { throw new HttpError(400, e.message || 'Pemulihan gagal.'); }
+}
+
+admin.post('/backups/:name/restore', (req, res) => {
+  if (!validName(req.params.name)) throw new HttpError(404, 'File tidak ditemukan.');
+  const file = path.join(backupDir, req.params.name);
+  if (!fs.existsSync(file)) throw new HttpError(404, 'File tidak ditemukan.');
+  res.json(doRestore(file));
+});
+
+// Unggah file .db (isi file dikirim apa adanya).
+admin.post('/restore', express.raw({ type: 'application/octet-stream', limit: '60mb' }), (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) throw new HttpError(400, 'File cadangan kosong.');
+  const tmp = path.join(backupDir, `.unggah-${Date.now()}.tmp`);
+  fs.writeFileSync(tmp, req.body);
+  try {
+    if (req.query.check) return res.json(inspectSafe(tmp));
+    res.json(doRestore(tmp));
+  } finally { fs.rmSync(tmp, { force: true }); }
+});
+function inspectSafe(f) { try { return inspectBackup(f); } catch (e) { throw new HttpError(400, e.message); } }
 
 admin.get('/bookings', (req, res) => {
   const s = getSettings();
@@ -653,12 +799,24 @@ function decide(req, res, from, to, kind) {
   const reason = clean(req.body?.reason, 200);
   if (to === 'approved' && conflicts(b.unit_id, b.check_in, b.check_out, s, { pending: false, excludeId: b.id }).any)
     throw new HttpError(409, 'Tanggal ini sudah terisi atau diblokir. Booking tidak bisa diterima.');
-  db.prepare('UPDATE bookings SET status = ?, reject_reason = ?, decided_at = ? WHERE id = ?').run(
-    to, to === 'approved' ? '' : reason, new Date().toISOString(), b.id
-  );
+  // Pengembalian dana saat menolak atau membatalkan booking yang sudah dibayar (0 = tidak ada, DP ditahan).
+  let refund = 0;
+  if (to !== 'approved' && req.body?.refund !== undefined && req.body.refund !== '') {
+    refund = intIn(req.body.refund, 0, 100_000_000, 'Jumlah pengembalian');
+    if (refund > paidOf(b.id)) throw new HttpError(400, `Pengembalian melebihi uang yang diterima (${rupiah(paidOf(b.id))}).`);
+  }
+  tx(() => {
+    db.prepare('UPDATE bookings SET status = ?, reject_reason = ?, decided_at = ? WHERE id = ?').run(
+      to, to === 'approved' ? '' : reason, new Date().toISOString(), b.id
+    );
+    if (refund > 0)
+      db.prepare('INSERT INTO payments(booking_id, amount, paid_at, note, created_at) VALUES(?,?,?,?,?)')
+        .run(b.id, -refund, todayStr(), `Pengembalian dana (booking ${to === 'cancelled' ? 'dibatalkan' : 'ditolak'})`, nowIso());
+  });
   if (to === 'approved' && b.dp_amount > 0 && !db.prepare('SELECT 1 FROM payments WHERE booking_id = ?').get(b.id))
     db.prepare('INSERT INTO payments(booking_id, amount, paid_at, note, created_at) VALUES(?,?,?,?,?)').run(b.id, b.dp_amount, todayStr(), 'DP (saat booking diterima)', nowIso());
   const updated = getBooking(b.id);
+  updated.refund_amount = refund;
   const base = baseUrl(req);
   for (const t of confirmTargets(updated, s)) {
     queueMessage({
@@ -1036,7 +1194,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Terjadi kesalahan di server.' });
 });
 
-setInterval(commissionDigest, 30 * 60 * 1000).unref();
+setInterval(() => { commissionDigest(); autoBackup(); }, 30 * 60 * 1000).unref();
+setTimeout(autoBackup, 20 * 1000).unref();
 setTimeout(commissionDigest, 15 * 1000).unref();
 
 app.listen(PORT, '0.0.0.0', () => {

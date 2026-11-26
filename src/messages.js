@@ -83,6 +83,7 @@ export function guestMsg(kind, b, s, base, reason = '', asMarketer = false) {
       '',
       `Mohon maaf, booking ${b.code} belum dapat kami konfirmasi.`,
       reason ? `Alasan: ${reason}` : null,
+      b.refund_amount > 0 ? `Pengembalian dana: ${rupiah(b.refund_amount)}.` : null,
       '',
       'Silakan hubungi admin atau pilih tanggal lain di halaman booking.',
       `*${s.property_name}*`,
@@ -96,6 +97,7 @@ export function guestMsg(kind, b, s, base, reason = '', asMarketer = false) {
       '',
       `Booking ${b.code} (${fmtLong(b.check_in)} sampai ${fmtLong(b.check_out)}) telah dibatalkan.`,
       reason ? `Keterangan: ${reason}` : null,
+      b.refund_amount > 0 ? `Pengembalian dana: ${rupiah(b.refund_amount)}.` : null,
       '',
       `*${s.property_name}*`,
     ]
