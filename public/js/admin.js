@@ -254,13 +254,32 @@
     )));
   }
 
+  function blockPreview() {
+    const st = $('#b-start').value, en = $('#b-end').value, p = $('#b-preview');
+    if (!st || !en) { p.textContent = 'Pilih tanggal. "Sampai tanggal" ikut diblokir.'; return; }
+    if (en < st) { p.textContent = 'Tanggal "sampai" harus sama atau setelah tanggal "dari".'; return; }
+    const n = Math.round((parse(en) - parse(st)) / 86400000) + 1;
+    p.textContent = `Akan memblokir ${fmt(st)} sampai ${fmt(en)} (${n} malam).`;
+  }
+  $('#b-start').addEventListener('change', () => {
+    if (!$('#b-end').value || $('#b-end').value < $('#b-start').value) $('#b-end').value = $('#b-start').value;
+    blockPreview();
+  });
+  $('#b-end').addEventListener('change', blockPreview);
+  $('#b-start').min = $('#b-end').min = todayWIB();
+
   $('#block-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const st = $('#b-start').value, en = $('#b-end').value;
     try {
-      await api('/blocks', 'POST', { start: $('#b-start').value, end: $('#b-end').value, note: $('#b-note').value });
+      await api('/blocks', 'POST', { start: st, end: en, note: $('#b-note').value });
       e.target.reset();
+      blockPreview();
+      // Pindahkan kalender ke bulan yang baru diblokir supaya hasilnya langsung terlihat.
+      const [y, m] = st.split('-').map(Number);
+      S.month = { y, m: m - 1 };
       await loadBookings(); renderCal(); renderDay(); renderBlocks();
-      toast('Tanggal diblokir.');
+      toast(`Diblokir: ${fmt(st)} sampai ${fmt(en)}.`);
     } catch (err) { toast(err.message, true); }
   });
 

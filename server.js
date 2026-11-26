@@ -844,6 +844,7 @@ admin.post('/blocks', (req, res) => {
   const unit = getUnit(Number(b.unit_id) || listUnits()[0]?.id);
   if (!unit) throw new HttpError(400, 'Unit tidak ditemukan.');
   if (!isDate(b.start) || !isDate(b.end) || b.end < b.start) throw new HttpError(400, 'Tanggal tidak valid.');
+  if (b.end < todayStr()) throw new HttpError(400, 'Tanggal blokir sudah lewat. Periksa bulan dan tahunnya.');
   if (diffDays(b.start, b.end) > 366) throw new HttpError(400, 'Rentang blokir terlalu panjang.');
   const endExclusive = addDays(b.end, 1);
   const c = conflicts(unit.id, b.start, endExclusive, s, { pending: false });
