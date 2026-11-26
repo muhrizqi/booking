@@ -117,3 +117,19 @@ export function guestMsg(kind, b, s, base, reason = '', asMarketer = false) {
     cek,
   ].join('\n');
 }
+
+/** Pengingat harian ke admin: komisi pemasar yang sudah boleh dibayar. items: [{ marketer_name, code, name, check_out, amount }] */
+export function commissionDigestMsg(items, s, url) {
+  const total = items.reduce((a, x) => a + x.amount, 0);
+  return [
+    `*Pengingat komisi pemasar* (${s.property_name})`,
+    '',
+    `${items.length} komisi siap dibayar karena tamu sudah selesai menginap:`,
+    ...items.map((x) => `- ${x.marketer_name}: ${rupiah(x.amount)} (${x.code}, tamu ${x.name}, check-out ${fmtLong(x.check_out)})\n  ${x.bank ? `Rekening: ${x.bank.bank_name} ${x.bank.bank_account}${x.bank.bank_holder ? ` a.n. ${x.bank.bank_holder}` : ''}` : 'Rekening belum diisi'}`),
+    '',
+    `Total: ${rupiah(total)}`,
+    url ? `\nTandai sudah dibayar di:\n${url}` : null,
+  ]
+    .filter((x) => x !== null)
+    .join('\n');
+}

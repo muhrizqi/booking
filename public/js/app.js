@@ -327,6 +327,7 @@
   }
 
   function renderBreakdown() {
+    if (!S.quote) return;
     if (!S.cfg.show_prices) { renderManual(); return; }
     $('#rincian').hidden = false;
     $('#manual-field').hidden = true;

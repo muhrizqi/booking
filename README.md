@@ -83,7 +83,17 @@ Untuk dipakai para pemasar, harga bisa disembunyikan: **Admin → Pengaturan →
 - Nama pemasar tampil di bawah tanggal yang sudah terboking; ketuk tanggalnya untuk melihat keterangan.
 - Pemasar yang sudah punya booking tidak bisa dihapus (nonaktifkan saja). Mengganti nama ikut memperbarui riwayat.
 - Konfirmasi WhatsApp (diterima/ditolak/dibatalkan) bawaannya dikirim ke pemasar saja; ubah ke "Pemasar dan tamu" di Pengaturan → Konfirmasi WhatsApp. Tanpa pemasar atau tanpa nomor HP pemasar, konfirmasi dikirim ke tamu.
+- **Komisi pemasar:** persen komisi diatur di Pengaturan → Komisi pemasar (bawaan 10%). Komisi baru bisa dibayar setelah tamu check-out, karena booking bisa dibatalkan sebelumnya. Tiap pagi (mulai 08.00 WIB) admin dapat pengingat WhatsApp bila ada komisi siap dibayar.
+- Tiap pemasar bisa diisi rekening (bank, nomor, atas nama); tampil di kartu komisi dan di pengingat WhatsApp admin. Rekening hanya terlihat di panel admin.
+- **Tab Tindak lanjut** (lencana merah = ada yang perlu diurus): komisi siap dibayar (tombol "Sudah dibayar"), booking menunggu konfirmasi, tamu check-in hari ini dan besok, dan komisi yang masih menunggu check-out. Total komisi per pemasar tampil di tab Pemasar.
 - Menyalakan kembali tampilan harga mengembalikan perilaku semula.
+
+## Pembayaran, edit data, dan keuangan
+
+- **Catat pembayaran** (kartu booking): catat DP, tambahan DP, atau pelunasan dengan tanggal dan catatan. Customer yang membayar lebih dari DP yang diminta cukup dicatat sesuai jumlah sebenarnya. Kartu menampilkan "Diterima" dan "sisa". Saat booking diterima tanpa pembayaran tercatat, DP yang diminta otomatis dicatat.
+- **Ubah data**: nama, WhatsApp, jumlah tamu, pemasar, total, DP yang diminta, dan catatan. Tanggal tidak diubah di sini (batalkan lalu buat baru).
+- **Perpanjang tahan**: pada booking yang menunggu, tambah masa tunggu DP (jam) dari batas sekarang. Bila masa tunggu sudah habis, bisa diperpanjang selama tanggalnya belum diambil orang lain.
+- **Tab Keuangan**: per bulan check-in (atau semua waktu): nilai booking, uang diterima, belum dibayar, komisi, dan nilai setelah komisi, dipisah per pemasar dan "Tanpa pemasar". Uang yang masuk dari booking batal atau ditolak ditandai terpisah.
 
 ## Panel admin
 

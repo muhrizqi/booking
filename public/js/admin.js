@@ -24,7 +24,7 @@
       else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
       else if (v !== false && v != null) n.setAttribute(k, v === true ? '' : v);
     }
-    for (const kid of kids.flat()) if (kid != null) n.append(kid);
+    for (const kid of kids.flat(Infinity)) if (kid != null) n.append(kid);
     return n;
   }
 
@@ -77,6 +77,8 @@
     $$('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
     $$('main > section').forEach((s) => { s.hidden = s.id !== 'tab-' + name; });
     if (name === 'booking') renderBookings();
+    if (name === 'tindak') loadInbox();
+    if (name === 'keuangan') loadReport();
     if (name === 'kalender') { renderCal(); renderDay(); renderBlocks(); }
     if (name === 'pemasar') loadMarketers();
     if (name === 'harga') loadPricing();
@@ -100,6 +102,7 @@
     const badge = $('#n-pending');
     badge.hidden = n === 0;
     badge.textContent = String(n);
+    loadInbox().catch(() => {});
   }
 
   function renderBookings() {
@@ -135,6 +138,9 @@
     } else if (b.wa_url) {
       btns.append(el('a', { class: 'btn line', href: b.wa_url, target: '_blank', rel: 'noopener', text: 'Buka WhatsApp' }));
     }
+    if (b.status === 'pending' || b.status === 'approved') btns.append(el('button', { type: 'button', class: 'btn line', text: 'Catat pembayaran', onclick: () => paymentsModal(b) }));
+    if (b.status === 'pending') btns.append(el('button', { type: 'button', class: 'btn line', text: 'Perpanjang tahan', onclick: () => extendHold(b) }));
+    if (b.status === 'pending' || b.status === 'approved') btns.append(el('button', { type: 'button', class: 'btn line', text: 'Ubah data', onclick: () => editModal(b) }));
     return el('article', { class: 'card', 'data-id': String(b.id) },
       el('div', { class: 'card-top' },
         el('span', { class: 'code', text: b.code }),
@@ -143,7 +149,9 @@
       el('p', { class: 'who', text: b.name }),
       b.marketer_name ? el('p', { class: 'meta' }, 'Pemasar: ', el('strong', { text: b.marketer_name })) : null,
       el('p', { class: 'meta' }, b.phone ? el('a', { href: `https://wa.me/${b.phone}`, target: '_blank', rel: 'noopener', text: `+${b.phone}` }) : 'Tanpa nomor', ` , masuk ${when(b.created_at)}`),
-      el('p', { class: 'money' }, `${fmt(b.check_in)} sampai ${fmt(b.check_out)}`, el('br'), `${b.nights} malam, ${b.guests} orang`, el('br'), `Total ${rupiah(b.total)}`, b.dp_amount ? `, DP ${rupiah(b.dp_amount)}` : ''),
+      el('p', { class: 'money' }, `${fmt(b.check_in)} sampai ${fmt(b.check_out)}`, el('br'), `${b.nights} malam, ${b.guests} orang`, el('br'), `Total ${rupiah(b.total)}`, b.dp_amount ? `, DP diminta ${rupiah(b.dp_amount)}` : '', b.status === 'pending' || b.status === 'approved' ? [el('br'), `Diterima ${rupiah(b.paid)}`, b.total - b.paid > 0 ? `, sisa ${rupiah(b.total - b.paid)}` : ', lunas'] : ''),
+      b.status === 'pending' && b.hold_until_eff ? el('p', { class: `hold${b.expired ? ' late' : ''}` , text: b.expired ? `Masa tunggu habis ${when(b.hold_until_eff)}. Tanggal sudah dilepas.` : `Tanggal ditahan sampai ${when(b.hold_until_eff)}` }) : null,
+      commissionLine(b),
       b.note ? el('p', { class: 'note', text: b.note }) : null,
       b.reject_reason ? el('p', { class: 'note', text: `Keterangan: ${b.reject_reason}` }) : null,
       btns
@@ -153,7 +161,7 @@
   async function decide(b, action) {
     let body = {};
     if (action === 'approve') {
-      if (!confirm(`Terima booking ${b.code} atas nama ${b.name}?\n\nPastikan DP ${rupiah(b.dp_amount)} sudah masuk. Penyewa akan menerima WhatsApp berisi aturan check-in dan check-out.`)) return;
+      if (!confirm(`Terima booking ${b.code} atas nama ${b.name}?\n\nPastikan DP sudah masuk. Bila belum ada pembayaran tercatat, DP ${rupiah(b.dp_amount)} dicatat sebagai uang masuk (jumlah lain: pakai Catat pembayaran lebih dulu). Penyewa akan menerima WhatsApp berisi aturan check-in dan check-out.`)) return;
     } else {
       const reason = prompt(action === 'reject' ? `Alasan menolak ${b.code} (boleh dikosongkan):` : `Keterangan pembatalan ${b.code} (boleh dikosongkan):`);
       if (reason === null) return;
@@ -269,7 +277,7 @@
   });
 
   // ---------- Pengaturan ----------
-  const SETTING_IDS = ['admin_wa', 'wa_provider', 'waha_url', 'waha_session', 'payment_info', 'dp_percent', 'pending_hours', 'checkin_time', 'checkout_time', 'rules', 'property_name', 'address', 'confirm_to'];
+  const SETTING_IDS = ['admin_wa', 'wa_provider', 'waha_url', 'waha_session', 'payment_info', 'dp_percent', 'pending_hours', 'checkin_time', 'checkout_time', 'rules', 'property_name', 'address', 'confirm_to', 'commission_percent'];
   const SECRET_IDS = ['waha_api_key', 'fonnte_token'];
 
   function waStateText() {
@@ -355,10 +363,201 @@
     } catch (err) { toast(err.message, true); }
   });
 
+  // ---------- Tindak lanjut ----------
+  function commissionLine(b) {
+    if (b.commission == null || b.status !== 'approved') return null;
+    const pct = `Komisi ${b.marketer_name} (${b.commission_percent}%): ${rupiah(b.commission)}`;
+    if (b.commission_paid_at) return el('p', { class: 'komisi paid', text: `${pct}, dibayar ${when(b.commission_paid_at)}` });
+    return el('p', { class: 'komisi', text: b.check_out <= todayWIB() ? `${pct}, siap dibayar` : `${pct}, dibayar setelah tamu check-out ${fmt(b.check_out)}` });
+  }
+
+  function commissionWaMsg(b) {
+    return `Assalamu'alaikum ${b.marketer_name}, komisi booking ${b.code} (tamu ${b.name}, ${fmt(b.check_in)} sampai ${fmt(b.check_out)}) sebesar ${rupiah(b.amount)} sudah kami kirim. Jazakumullah khairan.`;
+  }
+
+  function inboxGroup(title, hint, cards, emptyText) {
+    return el('div', { class: 'inbox-group' },
+      el('h2', { text: title }),
+      hint ? el('p', { class: 'catatan', text: hint }) : null,
+      cards.length ? cards : el('p', { class: 'empty', text: emptyText })
+    );
+  }
+
+  function inboxCard(b, kind) {
+    const top = el('div', { class: 'card-top' }, el('span', { class: 'code', text: b.code }), el('span', { class: 'meta', text: `${fmt(b.check_in)} sampai ${fmt(b.check_out)}` }));
+    if (kind === 'due' || kind === 'waiting') {
+      const btns = el('div', { class: 'btns' });
+      if (kind === 'due') {
+        btns.append(el('button', { type: 'button', class: 'btn', text: 'Sudah dibayar', onclick: async () => {
+          if (!confirm(`Tandai komisi ${b.marketer_name} sebesar ${rupiah(b.amount)} sudah dibayar?`)) return;
+          try { await api(`/bookings/${b.id}/commission-paid`, 'POST'); toast('Komisi ditandai sudah dibayar.'); await loadBookings(); await loadInbox(); } catch (e) { toast(e.message, true); }
+        } }));
+        if (b.marketer_phone) btns.append(el('a', { class: 'btn line', href: `https://wa.me/${b.marketer_phone}?text=${encodeURIComponent(commissionWaMsg(b))}`, target: '_blank', rel: 'noopener', text: 'Kabari pemasar lewat WhatsApp' }));
+      }
+      return el('article', { class: `card ${kind === 'due' ? 'due' : 'quiet'}` }, top,
+        el('p', { class: 'who', text: `${b.marketer_name}: ${rupiah(b.amount)}` }),
+        el('p', { class: 'meta', text: `Tamu ${b.name}, total ${rupiah(b.total)}, komisi ${b.commission_percent}%${b.marketer_phone ? `, WA +${b.marketer_phone}` : ', pemasar belum punya nomor WA'}` }),
+        kind === 'due' ? el('p', { class: 'meta rek' }, b.bank ? [`Transfer ke ${b.bank.name} `, el('strong', { text: b.bank.account }), b.bank.holder ? ` a.n. ${b.bank.holder}` : '', ' '] : 'Rekening pemasar belum diisi (isi di tab Pemasar).', b.bank ? el('button', { type: 'button', class: 'btn line mini', text: 'Salin no. rekening', onclick: () => navigator.clipboard?.writeText(b.bank.account.replace(/\D/g, '')).then(() => toast('Nomor rekening disalin.')).catch(() => toast(`Nomor rekening: ${b.bank.account}`)) }) : null) : null,
+        btns);
+    }
+    const btns = el('div', { class: 'btns' }, el('button', { type: 'button', class: 'btn', text: kind === 'pending' ? 'Buka dan proses' : 'Lihat booking', onclick: () => { S.filter = kind === 'pending' ? 'pending' : 'approved'; S.highlight = String(b.id); setTab('booking'); } }));
+    return el('article', { class: 'card' }, top,
+      el('p', { class: 'who', text: b.name }),
+      el('p', { class: 'meta', text: `${b.nights} malam, ${b.guests} orang, total ${rupiah(b.total)}${b.marketer_name ? `, pemasar ${b.marketer_name}` : ''}` }),
+      btns);
+  }
+
+  function renderInbox() {
+    const d = S.inbox;
+    if (!d) return;
+    $('#inbox').replaceChildren(
+      inboxGroup('Komisi siap dibayar', `Tamu sudah selesai menginap. Komisi ${d.commission_percent}% dari total.`, d.commission_due.map((b) => inboxCard(b, 'due')), 'Tidak ada komisi yang perlu dibayar.'),
+      inboxGroup('Booking menunggu konfirmasi', 'Cek DP lalu terima atau tolak.', d.pending.map((b) => inboxCard(b, 'pending')), 'Tidak ada booking yang menunggu.'),
+      inboxGroup('Tamu check-in hari ini dan besok', null, d.soon.map((b) => inboxCard(b, 'soon')), 'Tidak ada tamu yang akan check-in.'),
+      d.commission_waiting.length ? inboxGroup('Komisi menunggu tamu selesai menginap', 'Belum bisa dibayar karena tamu belum check-out dan booking masih bisa dibatalkan.', d.commission_waiting.map((b) => inboxCard(b, 'waiting')), '') : null
+    );
+  }
+
+  async function loadInbox() {
+    const d = await api('/inbox');
+    S.inbox = d;
+    const badge = $('#n-inbox');
+    badge.hidden = d.count === 0;
+    badge.textContent = String(d.count);
+    document.title = (d.count ? `(${d.count}) ` : '') + (document.title || '').replace(/^\(\d+\)\s*/, '');
+    if (S.tab === 'tindak') renderInbox();
+  }
+
+  // ---------- Jendela (edit, pembayaran) ----------
+  function openModal(title, ...nodes) {
+    $('#modal-title').textContent = title;
+    $('#modal-body').replaceChildren(...nodes);
+    $('#modal').hidden = false;
+  }
+  function closeModal() { $('#modal').hidden = true; $('#modal-body').replaceChildren(); }
+  $('#modal-x').addEventListener('click', closeModal);
+  $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
+
+  const field = (id, label, input, hint) => el('div', { class: 'field' }, el('label', { for: id, text: label }), input, hint ? el('small', { text: hint }) : null);
+  const digits = (v) => String(v ?? '').replace(/\D/g, '');
+
+  function editModal(b) {
+    const inp = (id, props) => el('input', { id, ...props });
+    const mk = el('select', { id: 'ed-marketer' }, el('option', { value: '', text: 'Tanpa pemasar' }),
+      ...S.marketers.filter((m) => m.active || m.id === b.marketer_id).map((m) => el('option', { value: String(m.id), text: m.name + (m.active ? '' : ' (nonaktif)') })));
+    mk.value = b.marketer_id ? String(b.marketer_id) : '';
+    const f = {
+      name: inp('ed-name', { value: b.name, maxlength: 80, required: true }),
+      phone: inp('ed-phone', { value: b.phone ? `0${b.phone.replace(/^62/, '')}` : '', type: 'tel', inputmode: 'tel' }),
+      guests: inp('ed-guests', { value: String(b.guests), type: 'number', min: 1 }),
+      total: inp('ed-total', { value: String(b.total), inputmode: 'numeric' }),
+      dp: inp('ed-dp', { value: String(b.dp_amount), inputmode: 'numeric' }),
+      note: el('textarea', { id: 'ed-note', rows: 3, maxlength: 300, text: b.note }),
+    };
+    const form = el('form', {},
+      el('p', { class: 'catatan', text: `${b.code}, ${fmt(b.check_in)} sampai ${fmt(b.check_out)}. Tanggal tidak bisa diubah di sini. Batalkan lalu buat booking baru bila tanggalnya berubah.` }),
+      field('ed-name', 'Nama', f.name), field('ed-phone', 'WhatsApp', f.phone),
+      el('div', { class: 'two' }, field('ed-guests', 'Jumlah tamu', f.guests), field('ed-marketer', 'Pemasar', mk)),
+      el('div', { class: 'two' }, field('ed-total', 'Total (Rp)', f.total), field('ed-dp', 'DP yang diminta (Rp)', f.dp)),
+      field('ed-note', 'Catatan', f.note),
+      el('button', { class: 'btn', type: 'submit', text: 'Simpan perubahan' })
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api(`/bookings/${b.id}`, 'PATCH', { name: f.name.value, phone: f.phone.value, guests: f.guests.value, total: digits(f.total.value), dp_amount: digits(f.dp.value), note: f.note.value, marketer_id: mk.value });
+        closeModal(); toast('Data booking disimpan.');
+        await loadBookings(); renderBookings();
+      } catch (err) { toast(err.message, true); }
+    });
+    openModal('Ubah data booking', form);
+  }
+
+  async function paymentsModal(b) {
+    let d;
+    try { d = await api(`/bookings/${b.id}/payments`); } catch (err) { toast(err.message, true); return; }
+    const sisa = Math.max(0, d.total - d.paid);
+    const amount = el('input', { id: 'pay-amount', inputmode: 'numeric', placeholder: 'Jumlah (Rp)', value: sisa ? String(sisa) : '' });
+    const date = el('input', { id: 'pay-date', type: 'date', value: todayWIB() });
+    const note = el('input', { id: 'pay-note', maxlength: 120, placeholder: 'Misalnya: transfer BSI, pelunasan' });
+    const list = d.payments.length
+      ? el('ul', { class: 'pay-list' }, d.payments.map((p) => el('li', {},
+          el('span', {}, `${fmt(p.paid_at)}: `, el('strong', { text: rupiah(p.amount) }), p.note ? ` (${p.note})` : ''),
+          el('button', { type: 'button', class: 'btn danger mini', text: 'Hapus', onclick: async () => {
+            if (!confirm(`Hapus catatan pembayaran ${rupiah(p.amount)}?`)) return;
+            try { await api(`/payments/${p.id}`, 'DELETE'); await loadBookings(); renderBookings(); paymentsModal(b); } catch (err) { toast(err.message, true); }
+          } }))))
+      : el('p', { class: 'empty', text: 'Belum ada pembayaran tercatat.' });
+    const form = el('form', {},
+      el('h3', { text: 'Tambah pembayaran' }),
+      field('pay-amount', 'Jumlah diterima (Rp)', amount, 'Terisi otomatis dengan sisa tagihan. Ubah bila customer membayar sebagian atau DP lebih dari yang diminta.'),
+      el('div', { class: 'two' }, field('pay-date', 'Tanggal', date), field('pay-note', 'Catatan', note)),
+      el('button', { class: 'btn', type: 'submit', text: 'Simpan pembayaran' })
+    );
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api(`/bookings/${b.id}/payments`, 'POST', { amount: digits(amount.value), paid_at: date.value, note: note.value });
+        toast('Pembayaran dicatat.');
+        await loadBookings(); renderBookings(); paymentsModal(b);
+      } catch (err) { toast(err.message, true); }
+    });
+    openModal(`Pembayaran ${b.code}`,
+      el('p', { class: 'meta', text: `${b.name}${b.marketer_name ? `, pemasar ${b.marketer_name}` : ''}` }),
+      el('div', { class: 'pay-sum' }, el('span', { text: `Total ${rupiah(d.total)}` }), el('span', { text: `DP diminta ${rupiah(d.dp_amount)}` }),
+        el('strong', { text: `Diterima ${rupiah(d.paid)}` }), el('span', { text: sisa ? `Sisa ${rupiah(sisa)}` : 'Lunas' })),
+      list, form);
+  }
+
+  async function extendHold(b) {
+    const v = prompt(`Perpanjang masa tunggu ${b.code} berapa jam? (24 = 1 hari, 72 = 3 hari)\nDihitung dari batas saat ini: ${when(b.hold_until_eff)}.`, '24');
+    if (v === null) return;
+    try {
+      const r = await api(`/bookings/${b.id}/extend`, 'POST', { hours: v });
+      toast(`Tanggal ditahan sampai ${when(r.hold_until)}.`);
+      await loadBookings(); renderBookings();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  // ---------- Keuangan ----------
+  const monthLabel = (m) => (m === 'all' ? 'Semua waktu' : new Date(m + '-01T00:00:00Z').toLocaleString('id-ID', { timeZone: 'UTC', month: 'long', year: 'numeric' }));
+  async function loadReport() {
+    try {
+      const month = $('#rp-month').value || todayWIB().slice(0, 7);
+      const r = await api(`/report?month=${month}`);
+      const sel = $('#rp-month');
+      const opts = ['all', ...new Set([todayWIB().slice(0, 7), ...r.months])].sort((x, y) => (x === 'all' ? -1 : y === 'all' ? 1 : y.localeCompare(x)));
+      sel.replaceChildren(...opts.map((m) => el('option', { value: m, text: monthLabel(m) })));
+      sel.value = r.month;
+      renderReport(r);
+    } catch (err) { toast(err.message, true); }
+  }
+  $('#rp-month').addEventListener('change', loadReport);
+
+  function renderReport(r) {
+    const row = (k, v, strong) => [el('dt', { text: k }), el('dd', { class: strong ? 'strong' : '', text: v })];
+    const t = r.totals;
+    const card = (title, g, extra) => el('article', { class: 'card rp-card' }, el('h3', { text: title }),
+      el('dl', { class: 'rp-grid' },
+        row('Booking diterima', `${g.bookings} (${g.nights} malam)`), row('Nilai booking', rupiah(g.value), true),
+        row('Uang diterima', rupiah(g.received)), row('Belum dibayar', rupiah(g.outstanding)),
+        r.commission_percent > 0 && g.commission != null ? [row(`Komisi ${r.commission_percent}%`, rupiah(g.commission)), row('Komisi sudah dibayar', rupiah(g.commission_paid)), row('Setelah komisi', rupiah(g.net), true)] : ''),
+      extra);
+    const rows = r.rows;
+    $('#report').replaceChildren(
+      card(`Total ${monthLabel(r.month)}`, t),
+      el('p', { class: 'catatan', text: `Uang masuk yang tercatat pada periode ini (berdasarkan tanggal bayar): ${rupiah(r.cash_in)}.${r.received_on_cancelled ? ` Termasuk ${rupiah(r.received_on_cancelled)} dari booking yang ditolak atau dibatalkan, yang perlu dikembalikan atau diputuskan.` : ''}` }),
+      el('h2', { text: 'Per pemasar' }),
+      ...(rows.length ? rows.map((g) => card(g.name, g)) : [el('p', { class: 'empty', text: 'Belum ada booking diterima pada periode ini.' })])
+    );
+  }
+
   // ---------- Pemasar ----------
   async function loadMarketers() {
-    const { marketers } = await api('/marketers');
+    const { marketers, commission_percent } = await api('/marketers');
     S.marketers = marketers;
+    S.commissionPct = commission_percent;
     // Pilihan pemasar di form booking manual (hanya yang aktif).
     $('#m-marketer').replaceChildren(el('option', { value: '', text: 'Tanpa pemasar' }),
       ...marketers.filter((m) => m.active).map((m) => el('option', { value: String(m.id), text: m.name })));
@@ -381,7 +580,12 @@
           el('span', {}, m.active ? el('span', { class: 'chip approved', text: 'Aktif' }) : el('span', { class: 'chip cancelled', text: 'Nonaktif' }))
         ),
         el('p', { class: 'meta', text: [m.phone ? `+${m.phone}` : 'Tanpa nomor', m.note].filter(Boolean).join(', ') }),
+        el('p', { class: 'meta' }, m.bank_account ? [`${m.bank_name} `, el('strong', { text: m.bank_account }), m.bank_holder ? ` a.n. ${m.bank_holder}` : ''] : 'Rekening belum diisi'),
         el('p', { class: 'money', text: `${m.bookings} booking, ${m.approved} diterima` }),
+        S.commissionPct > 0 ? el('p', { class: 'mk-money' },
+          el('span', { text: `Siap dibayar ${rupiah(m.commission_due)}` }),
+          el('span', { text: `Menunggu check-out ${rupiah(m.commission_waiting)}` }),
+          el('span', { text: `Sudah dibayar ${rupiah(m.commission_paid)}` })) : null,
         el('div', { class: 'mk-link' }, linkInput, el('button', { type: 'button', class: 'btn line', text: 'Salin', onclick: () => copyText(m.link, linkInput) })),
         el('div', { class: 'btns' },
           el('button', { type: 'button', class: 'btn line', text: 'Ubah', onclick: async () => {
@@ -389,7 +593,16 @@
             if (name === null) return;
             const phone = prompt('Nomor WhatsApp (boleh dikosongkan):', m.phone ? `0${m.phone.replace(/^62/, '')}` : '');
             if (phone === null) return;
-            try { await api(`/marketers/${m.id}`, 'PUT', { name, phone }); toast('Data pemasar disimpan.'); await loadMarketers(); await loadBookings(); } catch (e) { toast(e.message, true); }
+            const bank_name = prompt('Nama bank (kosongkan bila tanpa rekening):', m.bank_name || '');
+            if (bank_name === null) return;
+            let bank_account = '', bank_holder = '';
+            if (bank_name.trim()) {
+              bank_account = prompt('Nomor rekening:', m.bank_account || '');
+              if (bank_account === null) return;
+              bank_holder = prompt('Atas nama rekening:', m.bank_holder || m.name);
+              if (bank_holder === null) return;
+            }
+            try { await api(`/marketers/${m.id}`, 'PUT', { name, phone, bank_name, bank_account, bank_holder }); toast('Data pemasar disimpan.'); await loadMarketers(); await loadBookings(); } catch (e) { toast(e.message, true); }
           } }),
           el('button', { type: 'button', class: 'btn line', text: m.active ? 'Nonaktifkan' : 'Aktifkan', onclick: async () => {
             if (m.active && !confirm(`Nonaktifkan ${m.name}? Namanya hilang dari pilihan dan tautan pribadinya tidak berlaku. Riwayat booking tetap ada.`)) return;
@@ -407,7 +620,7 @@
   $('#mk-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
-      await api('/marketers', 'POST', { name: $('#mk-name').value, phone: $('#mk-phone').value, note: $('#mk-note').value });
+      await api('/marketers', 'POST', { name: $('#mk-name').value, phone: $('#mk-phone').value, note: $('#mk-note').value, bank_name: $('#mk-bank').value, bank_account: $('#mk-account').value, bank_holder: $('#mk-holder').value });
       e.target.reset();
       toast('Pemasar ditambahkan.');
       await loadMarketers();
@@ -493,7 +706,7 @@
   });
 
   // ---------- Pesan ----------
-  const KIND = { admin_new: 'Booking baru ke admin', guest_approved: 'Diterima ke penyewa', guest_rejected: 'Ditolak ke penyewa', guest_cancelled: 'Dibatalkan ke penyewa', marketer_approved: 'Diterima ke pemasar', marketer_rejected: 'Ditolak ke pemasar', marketer_cancelled: 'Dibatalkan ke pemasar' };
+  const KIND = { admin_new: 'Booking baru ke admin', guest_approved: 'Diterima ke penyewa', guest_rejected: 'Ditolak ke penyewa', guest_cancelled: 'Dibatalkan ke penyewa', marketer_approved: 'Diterima ke pemasar', marketer_rejected: 'Ditolak ke pemasar', marketer_cancelled: 'Dibatalkan ke pemasar', admin_commission: 'Pengingat komisi ke admin' };
   const MSG_STATUS = { sent: 'Terkirim', failed: 'Gagal', skipped: 'Belum dikirim', queued: 'Mengirim' };
 
   async function loadMessages() {
@@ -533,9 +746,12 @@
       $('#app').hidden = false;
       await loadBookings();
       loadMarketers().catch(() => {});
+      const want = new URLSearchParams(location.search).get('tab');
       const b = new URLSearchParams(location.search).get('b');
       if (b) { S.filter = 'all'; S.highlight = b; history.replaceState(null, '', location.pathname); }
-      setTab('booking');
+      if (want) history.replaceState(null, '', location.pathname);
+      setTab(want === 'tindak' ? 'tindak' : 'booking');
+      setInterval(() => { if (!document.hidden) loadBookings().catch(() => {}); }, 60000);
       fetch('/api/config').then((r) => r.json()).then((c) => { $('#bar-name').textContent = c.name; }).catch(() => {});
     } catch { /* api() sudah menampilkan login bila 401 */ }
   }

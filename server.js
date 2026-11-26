@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { db, dbInfo, getSettings, setSetting, listUnits, getUnit, tx } from './src/db.js';
 import { queueMessage, deliver, getWaProvider, sendRaw, wahaStatus } from './src/wa.js';
 import {
-  HttpError, allow, todayStr, isDate, addDays, diffDays, normalizePhone, makeCode,
+  HttpError, allow, todayStr, isDate, addDays, diffDays, normalizePhone, makeCode, rupiah,
 } from './src/util.js';
 import { quote, assertMinNights, priceMap, nightlyPrices, parseWeekendDays } from './src/pricing.js';
-import { adminNewBookingMsg, guestToAdminMsg, guestMsg, ruleLines, mapsUrl } from './src/messages.js';
+import { adminNewBookingMsg, guestToAdminMsg, guestMsg, commissionDigestMsg, ruleLines, mapsUrl } from './src/messages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -62,6 +62,9 @@ const adminPhones = (s) =>
     .map((x) => normalizePhone(x))
     .filter(Boolean);
 
+const nowIso = () => new Date().toISOString();
+/** Booking pending masih menahan tanggal: dalam batas pending_hours, atau diperpanjang admin (hold_until). */
+const isHeld = (b, s) => b.created_at > pendingCutoff(s) || (b.hold_until || '') > nowIso();
 const pendingCutoff = (s) => new Date(Date.now() - Number(s.pending_hours || 24) * 3600e3).toISOString();
 
 /** Rentang yang menghalangi: booking disetujui, booking menunggu yang belum kedaluwarsa, dan blokir admin. */
@@ -70,9 +73,9 @@ function conflicts(unitId, from, to, s, { pending = true, excludeId = null } = {
     .prepare(
       `SELECT id, check_in, check_out, status, marketer_name FROM bookings
        WHERE unit_id = ? AND check_in < ? AND check_out > ? AND id != ?
-         AND (status = 'approved' OR (? = 1 AND status = 'pending' AND created_at > ?))`
+         AND (status = 'approved' OR (? = 1 AND status = 'pending' AND (created_at > ? OR COALESCE(hold_until,'') > ?)))`
     )
-    .all(unitId, to, from, excludeId ?? -1, pending ? 1 : 0, pendingCutoff(s));
+    .all(unitId, to, from, excludeId ?? -1, pending ? 1 : 0, pendingCutoff(s), nowIso());
   const blocks = db
     .prepare('SELECT id, start_date, end_date FROM blocks WHERE unit_id = ? AND start_date < ? AND end_date > ?')
     .all(unitId, to, from);
@@ -155,7 +158,7 @@ function publicBooking(b, s, { withPayment = false } = {}) {
     total: b.total,
     dp_amount: b.dp_amount,
     reject_reason: b.reject_reason || '',
-    expired: b.status === 'pending' && b.created_at < pendingCutoff(s),
+    expired: b.status === 'pending' && !isHeld(b, s),
     payment_info: withPayment && b.status === 'pending' ? s.payment_info : undefined,
   };
 }
@@ -170,14 +173,76 @@ function confirmTargets(b, s) {
   return out;
 }
 
+// ---------- Komisi pemasar & tindak lanjut ----------
+const commissionPct = (s) => Math.max(0, Math.min(100, Number(s.commission_percent ?? 10) || 0));
+const commissionOf = (b, s) => Math.round((b.total * commissionPct(s)) / 100);
+
+/**
+ * Komisi dibayar setelah tamu selesai menginap (hari check-out tiba), karena booking bisa dibatalkan sebelum itu.
+ * due = siap dibayar, waiting = tamu belum selesai menginap, paid = sudah dibayar.
+ */
+function commissionState(s) {
+  const today = todayStr();
+  const rows = commissionPct(s) > 0
+    ? db.prepare(`SELECT * FROM bookings WHERE status = 'approved' AND marketer_id IS NOT NULL ORDER BY check_out, id`).all()
+    : [];
+  const out = { due: [], waiting: [], paid: [] };
+  for (const b of rows) {
+    const item = { ...b, amount: b.commission_paid_amount ?? commissionOf(b, s) };
+    if (b.commission_paid_at) out.paid.push(item);
+    else if (b.check_out <= today) out.due.push(item);
+    else out.waiting.push(item);
+  }
+  return out;
+}
+
+function inboxData(s) {
+  const today = todayStr();
+  const cutoff = pendingCutoff(s);
+  const pending = db.prepare(`SELECT * FROM bookings WHERE status = 'pending' AND (created_at > ? OR COALESCE(hold_until,'') > ?) ORDER BY id`).all(cutoff, nowIso());
+  const soon = db
+    .prepare(`SELECT * FROM bookings WHERE status = 'approved' AND check_in >= ? AND check_in <= ? ORDER BY check_in, id`)
+    .all(today, addDays(today, 1));
+  const c = commissionState(s);
+  return {
+    pending, soon, commission_due: c.due, commission_waiting: c.waiting,
+    commission_percent: commissionPct(s),
+    count: pending.length + c.due.length,
+  };
+}
+
+/** Kirim ringkasan komisi jatuh tempo ke admin sekali sehari (mulai pukul 08.00 WIB). */
+function commissionDigest() {
+  try {
+    const s = getSettings();
+    const today = todayStr();
+    if (s.last_commission_digest === today) return;
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+    if (hour < 8) return;
+    const due = commissionState(s).due;
+    if (!due.length) return;
+    const base = (process.env.BASE_URL || s.base_url_seen || '').replace(/\/$/, '');
+    const banks = Object.fromEntries(db.prepare('SELECT id, bank_name, bank_account, bank_holder FROM marketers').all().map((m) => [m.id, m]));
+    const body = commissionDigestMsg(due.map((x) => ({ ...x, marketer_name: x.marketer_name || '-', bank: banks[x.marketer_id]?.bank_account ? banks[x.marketer_id] : null })), s, base ? `${base}${ADMIN_PATH}?tab=tindak` : '');
+    for (const to of adminPhones(s)) queueMessage({ to, kind: 'admin_commission', body });
+    setSetting('last_commission_digest', today);
+  } catch (e) { console.error('[komisi]', e); }
+}
+
+const paidOf = (id) => db.prepare('SELECT COALESCE(SUM(amount),0) n FROM payments WHERE booking_id = ?').get(id).n;
+
 function adminBooking(b, s, base, unitsById) {
   const kind = { pending: 'reminder', approved: 'approved', rejected: 'rejected', cancelled: 'cancelled' }[b.status];
   const t = confirmTargets(b, s)[0];
   const text = t ? guestMsg(kind, b, s, base, b.reject_reason, t.asMarketer) : '';
   return {
     ...b,
+    commission: b.marketer_id && commissionPct(s) > 0 ? b.commission_paid_amount ?? commissionOf(b, s) : null,
+    commission_percent: commissionPct(s),
+    paid: paidOf(b.id),
+    hold_until_eff: b.status === 'pending' ? [new Date(new Date(b.created_at).getTime() + Number(s.pending_hours || 24) * 3600e3).toISOString(), b.hold_until || ''].sort().pop() : null,
     unit_name: unitsById[b.unit_id]?.name || '-',
-    expired: b.status === 'pending' && b.created_at < pendingCutoff(s),
+    expired: b.status === 'pending' && !isHeld(b, s),
     wa_url: t ? `https://wa.me/${t.to}?text=${encodeURIComponent(text)}` : null,
   };
 }
@@ -308,8 +373,8 @@ app.post('/api/bookings', (req, res) => {
 
   const booking = tx(() => {
     const open = db
-      .prepare(`SELECT COUNT(*) n FROM bookings WHERE phone = ? AND status = 'pending' AND created_at > ?`)
-      .get(phone, pendingCutoff(s)).n;
+      .prepare(`SELECT COUNT(*) n FROM bookings WHERE phone = ? AND status = 'pending' AND (created_at > ? OR COALESCE(hold_until,'') > ?)`)
+      .get(phone, pendingCutoff(s), nowIso()).n;
     if (open >= 3) throw new HttpError(429, 'Masih ada 3 booking menunggu konfirmasi untuk nomor ini.');
     if (conflicts(unit.id, b.check_in, b.check_out, s).any)
       throw new HttpError(409, 'Maaf, sebagian tanggal itu baru saja terisi. Pilih tanggal lain.');
@@ -388,9 +453,165 @@ admin.use((req, res, next) => {
   next();
 });
 
-admin.get('/session', (req, res) =>
-  res.json({ ok: true, wa_provider: getWaProvider(), storage: { persistent: dbInfo.persistent, file: dbInfo.file } })
-);
+admin.get('/session', (req, res) => {
+  const seen = baseUrl(req);
+  if (getSettings().base_url_seen !== seen) setSetting('base_url_seen', seen);
+  res.json({ ok: true, wa_provider: getWaProvider(), storage: { persistent: dbInfo.persistent, file: dbInfo.file } });
+});
+
+admin.get('/inbox', (req, res) => {
+  const s = getSettings();
+  const base = baseUrl(req);
+  const unitsById = Object.fromEntries(listUnits().map((u) => [u.id, u]));
+  const mk = Object.fromEntries(db.prepare('SELECT id, phone, bank_name, bank_account, bank_holder FROM marketers').all().map((m) => [m.id, m]));
+  const d = inboxData(s);
+  const pack = (b) => ({ ...adminBooking(b, s, base, unitsById), amount: b.amount ?? commissionOf(b, s), marketer_phone: mk[b.marketer_id]?.phone || '', bank: mk[b.marketer_id]?.bank_account ? { name: mk[b.marketer_id].bank_name, account: mk[b.marketer_id].bank_account, holder: mk[b.marketer_id].bank_holder } : null });
+  res.json({
+    count: d.count,
+    commission_percent: d.commission_percent,
+    pending: d.pending.map(pack),
+    soon: d.soon.map(pack),
+    commission_due: d.commission_due.map(pack),
+    commission_waiting: d.commission_waiting.map(pack),
+  });
+});
+
+admin.post('/bookings/:id/commission-paid', (req, res) => {
+  const s = getSettings();
+  const b = getBooking(Number(req.params.id));
+  if (!b || !b.marketer_id) throw new HttpError(404, 'Booking pemasar tidak ditemukan.');
+  if (b.status !== 'approved') throw new HttpError(409, 'Komisi hanya untuk booking yang diterima.');
+  if (b.check_out > todayStr()) throw new HttpError(409, 'Tamu belum selesai menginap. Komisi dibayar setelah check-out.');
+  if (b.commission_paid_at) throw new HttpError(409, 'Komisi ini sudah ditandai dibayar.');
+  db.prepare('UPDATE bookings SET commission_paid_at = ?, commission_paid_amount = ? WHERE id = ?').run(new Date().toISOString(), commissionOf(b, s), b.id);
+  res.json({ ok: true });
+});
+
+admin.post('/bookings/:id/commission-unpaid', (req, res) => {
+  db.prepare('UPDATE bookings SET commission_paid_at = NULL, commission_paid_amount = NULL WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---------- Edit booking, pembayaran, perpanjang tahan, laporan keuangan ----------
+const intIn = (v, min, max, label) => {
+  const n = Number(String(v ?? '').replace(/[.\s]/g, ''));
+  if (!Number.isInteger(n) || n < min || n > max) throw new HttpError(400, `${label} harus angka bulat ${min} sampai ${max}.`);
+  return n;
+};
+
+admin.patch('/bookings/:id', (req, res) => {
+  const s = getSettings();
+  const b = getBooking(Number(req.params.id));
+  if (!b) throw new HttpError(404, 'Booking tidak ditemukan.');
+  const x = req.body || {};
+  const unit = getUnit(b.unit_id);
+  const name = x.name !== undefined ? clean(x.name, 80) : b.name;
+  if (name.length < 2) throw new HttpError(400, 'Nama wajib diisi.');
+  let phone = b.phone;
+  if (x.phone !== undefined) {
+    const raw = String(x.phone ?? '').trim();
+    phone = raw ? normalizePhone(raw) : null;
+    if (raw && !phone) throw new HttpError(400, 'Nomor WhatsApp tidak valid.');
+  }
+  const guests = x.guests !== undefined ? intIn(x.guests, 1, unit.max_capacity, 'Jumlah tamu') : b.guests;
+  const total = x.total !== undefined ? intIn(x.total, 0, 100_000_000, 'Total') : b.total;
+  const dp = x.dp_amount !== undefined ? intIn(x.dp_amount, 0, 100_000_000, 'DP') : b.dp_amount;
+  if (dp > total) throw new HttpError(400, 'DP tidak boleh lebih besar dari total.');
+  const note = x.note !== undefined ? clean(x.note, 300) : b.note;
+  let mId = b.marketer_id, mName = b.marketer_name;
+  if (x.marketer_id !== undefined) {
+    if (x.marketer_id === '' || x.marketer_id === null) { mId = null; mName = ''; }
+    else {
+      const m = db.prepare('SELECT id, name FROM marketers WHERE id = ?').get(Number(x.marketer_id));
+      if (!m) throw new HttpError(400, 'Pemasar tidak ditemukan.');
+      mId = m.id; mName = m.name;
+    }
+  }
+  if (b.commission_paid_at && (mId !== b.marketer_id || total !== b.total))
+    throw new HttpError(409, 'Komisi booking ini sudah ditandai dibayar, jadi pemasar dan total tidak bisa diubah.');
+  db.prepare('UPDATE bookings SET name=?, phone=?, guests=?, total=?, dp_amount=?, note=?, marketer_id=?, marketer_name=? WHERE id=?')
+    .run(name, phone, guests, total, dp, note, mId, mName, b.id);
+  const unitsById = Object.fromEntries(listUnits().map((u) => [u.id, u]));
+  res.json({ booking: adminBooking(getBooking(b.id), s, baseUrl(req), unitsById) });
+});
+
+admin.get('/bookings/:id/payments', (req, res) => {
+  const b = getBooking(Number(req.params.id));
+  if (!b) throw new HttpError(404, 'Booking tidak ditemukan.');
+  const payments = db.prepare('SELECT id, amount, paid_at, note FROM payments WHERE booking_id = ? ORDER BY paid_at, id').all(b.id);
+  res.json({ total: b.total, dp_amount: b.dp_amount, paid: payments.reduce((a, p) => a + p.amount, 0), payments });
+});
+
+admin.post('/bookings/:id/payments', (req, res) => {
+  const b = getBooking(Number(req.params.id));
+  if (!b) throw new HttpError(404, 'Booking tidak ditemukan.');
+  const amount = intIn(req.body?.amount, 1, 100_000_000, 'Jumlah');
+  const paid_at = req.body?.paid_at ? String(req.body.paid_at) : todayStr();
+  if (!isDate(paid_at) || paid_at > addDays(todayStr(), 1)) throw new HttpError(400, 'Tanggal pembayaran tidak valid.');
+  if (['pending', 'approved'].includes(b.status) && paidOf(b.id) + amount > b.total)
+    throw new HttpError(400, `Jumlah melebihi total booking. Sisa yang belum dibayar ${rupiah(Math.max(0, b.total - paidOf(b.id)))}.`);
+  const r = db.prepare('INSERT INTO payments(booking_id, amount, paid_at, note, created_at) VALUES(?,?,?,?,?)').run(b.id, amount, paid_at, clean(req.body?.note, 120), nowIso());
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+admin.delete('/payments/:id', (req, res) => {
+  db.prepare('DELETE FROM payments WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+/** Perpanjang masa tunggu DP: batas baru = (batas sekarang atau saat ini, mana yang lebih akhir) + jam yang diminta. */
+admin.post('/bookings/:id/extend', (req, res) => {
+  const s = getSettings();
+  const hours = intIn(req.body?.hours ?? 24, 1, 720, 'Jumlah jam');
+  const out = tx(() => {
+    const b = getBooking(Number(req.params.id));
+    if (!b) throw new HttpError(404, 'Booking tidak ditemukan.');
+    if (b.status !== 'pending') throw new HttpError(409, 'Hanya booking yang menunggu yang bisa diperpanjang.');
+    if (b.check_in < todayStr()) throw new HttpError(409, 'Tanggal check-in sudah lewat.');
+    if (!isHeld(b, s) && conflicts(b.unit_id, b.check_in, b.check_out, s, { excludeId: b.id }).any)
+      throw new HttpError(409, 'Masa tunggu sudah habis dan tanggalnya sekarang terisi booking lain.');
+    const cur = [new Date(new Date(b.created_at).getTime() + Number(s.pending_hours || 24) * 3600e3).toISOString(), b.hold_until || '', nowIso()].sort().pop();
+    const until = new Date(new Date(cur).getTime() + hours * 3600e3).toISOString();
+    db.prepare('UPDATE bookings SET hold_until = ? WHERE id = ?').run(until, b.id);
+    return until;
+  });
+  res.json({ hold_until: out });
+});
+
+/** Laporan per pemasar. Dasar: booking diterima yang check-in-nya jatuh di bulan itu ("all" = semua). */
+admin.get('/report', (req, res) => {
+  const s = getSettings();
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : 'all';
+  const months = db.prepare(`SELECT DISTINCT substr(check_in, 1, 7) m FROM bookings WHERE status = 'approved' ORDER BY m DESC`).all().map((r) => r.m);
+  const inScope = (col) => (month === 'all' ? '1=1' : `substr(${col}, 1, 7) = '${month}'`);
+  const rows = db.prepare(
+    `SELECT b.*, COALESCE((SELECT SUM(amount) FROM payments p WHERE p.booking_id = b.id), 0) AS paid
+     FROM bookings b WHERE b.status = 'approved' AND ${inScope('b.check_in')} ORDER BY b.check_in`
+  ).all();
+  const groups = new Map();
+  for (const b of rows) {
+    const key = b.marketer_id ?? 0;
+    if (!groups.has(key)) groups.set(key, { marketer_id: b.marketer_id, name: b.marketer_id ? b.marketer_name : 'Tanpa pemasar', bookings: 0, nights: 0, value: 0, received: 0, commission: 0, commission_paid: 0 });
+    const g = groups.get(key);
+    g.bookings++; g.nights += b.nights; g.value += b.total; g.received += b.paid;
+    if (b.marketer_id && commissionPct(s) > 0) {
+      const c = b.commission_paid_amount ?? commissionOf(b, s);
+      g.commission += c;
+      if (b.commission_paid_at) g.commission_paid += c;
+    }
+  }
+  const list = [...groups.values()].map((g) => ({ ...g, outstanding: g.value - g.received, net: g.value - g.commission })).sort((a, b) => b.value - a.value);
+  const sum = (k) => list.reduce((a, g) => a + g[k], 0);
+  const cashIn = db.prepare(`SELECT COALESCE(SUM(amount),0) n FROM payments WHERE ${inScope('paid_at')}`).get().n;
+  const dead = db.prepare(
+    `SELECT COALESCE(SUM(p.amount),0) n FROM payments p JOIN bookings b ON b.id = p.booking_id WHERE b.status IN ('cancelled','rejected') AND ${inScope('p.paid_at')}`
+  ).get().n;
+  res.json({
+    month, months, commission_percent: commissionPct(s), rows: list,
+    totals: { bookings: sum('bookings'), nights: sum('nights'), value: sum('value'), received: sum('received'), outstanding: sum('outstanding'), commission: sum('commission'), commission_paid: sum('commission_paid'), net: sum('net') },
+    cash_in: cashIn, received_on_cancelled: dead,
+  });
+});
 
 admin.get('/bookings', (req, res) => {
   const s = getSettings();
@@ -435,6 +656,8 @@ function decide(req, res, from, to, kind) {
   db.prepare('UPDATE bookings SET status = ?, reject_reason = ?, decided_at = ? WHERE id = ?').run(
     to, to === 'approved' ? '' : reason, new Date().toISOString(), b.id
   );
+  if (to === 'approved' && b.dp_amount > 0 && !db.prepare('SELECT 1 FROM payments WHERE booking_id = ?').get(b.id))
+    db.prepare('INSERT INTO payments(booking_id, amount, paid_at, note, created_at) VALUES(?,?,?,?,?)').run(b.id, b.dp_amount, todayStr(), 'DP (saat booking diterima)', nowIso());
   const updated = getBooking(b.id);
   const base = baseUrl(req);
   for (const t of confirmTargets(updated, s)) {
@@ -484,6 +707,7 @@ const SETTING_RULES = {
   property_name: { max: 80 },
   show_prices: { bool: true },
   confirm_to: { oneOf: ['marketer', 'both'] },
+  commission_percent: { int: [0, 100] },
   admin_wa: { phones: true },
   wa_provider: { oneOf: ['none', 'waha', 'fonnte'] },
   waha_url: { max: 200, url: true },
@@ -590,8 +814,29 @@ admin.get('/marketers', (req, res) => {
        FROM marketers m ORDER BY m.active DESC, m.name COLLATE NOCASE`
     )
     .all();
-  res.json({ marketers: rows.map((m) => ({ ...m, link: `${base}/?p=${m.code}` })) });
+  const st = getSettings();
+  const cs = commissionState(st);
+  const sum = (arr, id) => arr.filter((x) => x.marketer_id === id).reduce((a, x) => a + x.amount, 0);
+  res.json({
+    commission_percent: commissionPct(st),
+    marketers: rows.map((m) => ({
+      ...m, link: `${base}/?p=${m.code}`,
+      commission_due: sum(cs.due, m.id), commission_waiting: sum(cs.waiting, m.id), commission_paid: sum(cs.paid, m.id),
+    })),
+  });
 });
+
+/** Rekening pemasar: bank, nomor (angka, spasi, strip), atas nama. Kosong semua = tanpa rekening. */
+function bankFields(b, row = {}) {
+  const pick = (k, max) => (b[k] !== undefined ? clean(b[k], max) : row[k] ?? '');
+  const bank_name = pick('bank_name', 40);
+  const bank_account = pick('bank_account', 30);
+  const bank_holder = pick('bank_holder', 60);
+  if (bank_account && !/^[0-9][0-9 .-]{3,28}[0-9]$/.test(bank_account))
+    throw new HttpError(400, 'Nomor rekening hanya boleh berisi angka (spasi dan strip boleh), minimal 5 digit.');
+  if (bank_account && !bank_name) throw new HttpError(400, 'Isi nama bank untuk nomor rekening itu.');
+  return { bank_name, bank_account, bank_holder };
+}
 
 admin.post('/marketers', (req, res) => {
   const name = clean(req.body?.name, 60);
@@ -599,10 +844,11 @@ admin.post('/marketers', (req, res) => {
   const rawPhone = String(req.body?.phone ?? '').trim();
   const phone = rawPhone ? normalizePhone(rawPhone) : '';
   if (rawPhone && !phone) throw new HttpError(400, 'Nomor WhatsApp pemasar tidak valid.');
+  const bk = bankFields(req.body || {});
   if (db.prepare('SELECT 1 FROM marketers WHERE name = ? COLLATE NOCASE').get(name)) throw new HttpError(409, 'Nama pemasar itu sudah ada.');
   const r = db
-    .prepare('INSERT INTO marketers(name, phone, note, code, created_at) VALUES(?,?,?,?,?)')
-    .run(name, phone, clean(req.body?.note, 200), newMarketerCode(), new Date().toISOString());
+    .prepare('INSERT INTO marketers(name, phone, note, code, created_at, bank_name, bank_account, bank_holder) VALUES(?,?,?,?,?,?,?,?)')
+    .run(name, phone, clean(req.body?.note, 200), newMarketerCode(), new Date().toISOString(), bk.bank_name, bk.bank_account, bk.bank_holder);
   res.status(201).json({ id: r.lastInsertRowid });
 });
 
@@ -622,8 +868,9 @@ admin.put('/marketers/:id', (req, res) => {
   }
   const active = b.active !== undefined ? (b.active ? 1 : 0) : row.active;
   const note = b.note !== undefined ? clean(b.note, 200) : row.note;
+  const bk = bankFields(b, row);
   tx(() => {
-    db.prepare('UPDATE marketers SET name = ?, phone = ?, note = ?, active = ? WHERE id = ?').run(name, phone, note, active, row.id);
+    db.prepare('UPDATE marketers SET name = ?, phone = ?, note = ?, active = ?, bank_name = ?, bank_account = ?, bank_holder = ? WHERE id = ?').run(name, phone, note, active, bk.bank_name, bk.bank_account, bk.bank_holder, row.id);
     if (name !== row.name) db.prepare('UPDATE bookings SET marketer_name = ? WHERE marketer_id = ?').run(name, row.id);
   });
   res.json({ ok: true });
@@ -788,6 +1035,9 @@ app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Terjadi kesalahan di server.' });
 });
+
+setInterval(commissionDigest, 30 * 60 * 1000).unref();
+setTimeout(commissionDigest, 15 * 1000).unref();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Guest house app berjalan di port ${PORT} (admin: ${ADMIN_PATH}, WA: ${getWaProvider()})`);

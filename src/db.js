@@ -101,8 +101,31 @@ CREATE TABLE IF NOT EXISTS marketers (
 `);
 
 // Booking mencatat pemasarnya (id dan salinan nama, supaya riwayat tetap terbaca).
+// Pembayaran yang diterima per booking (DP, tambahan DP, pelunasan). Dipakai untuk laporan keuangan.
+const hadPayments = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='payments'").get();
+db.exec(`CREATE TABLE IF NOT EXISTS payments (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id),
+  amount     INTEGER NOT NULL,
+  paid_at    TEXT NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);`);
+if (!hadPayments) {
+  // Data lama: booking yang sudah diterima dianggap DP-nya sudah masuk.
+  db.exec(`INSERT INTO payments(booking_id, amount, paid_at, note, created_at)
+           SELECT id, dp_amount, substr(COALESCE(decided_at, created_at), 1, 10), 'DP (data sebelum fitur keuangan)', COALESCE(decided_at, created_at)
+           FROM bookings WHERE status = 'approved' AND dp_amount > 0`);
+}
+const marketerCols = db.prepare('PRAGMA table_info(marketers)').all().map((c) => c.name);
+for (const c of ['bank_name', 'bank_account', 'bank_holder'])
+  if (!marketerCols.includes(c)) db.exec(`ALTER TABLE marketers ADD COLUMN ${c} TEXT NOT NULL DEFAULT ''`);
 const bookingCols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name);
 if (!bookingCols.includes('marketer_id')) db.exec('ALTER TABLE bookings ADD COLUMN marketer_id INTEGER');
+if (!bookingCols.includes('hold_until')) db.exec('ALTER TABLE bookings ADD COLUMN hold_until TEXT');
+if (!bookingCols.includes('commission_paid_at')) db.exec('ALTER TABLE bookings ADD COLUMN commission_paid_at TEXT');
+if (!bookingCols.includes('commission_paid_amount')) db.exec('ALTER TABLE bookings ADD COLUMN commission_paid_amount INTEGER');
 if (!bookingCols.includes('marketer_name')) db.exec("ALTER TABLE bookings ADD COLUMN marketer_name TEXT NOT NULL DEFAULT ''");
 
 // Migrasi ringan untuk database yang dibuat versi sebelumnya.
@@ -117,6 +140,7 @@ const DEFAULT_SETTINGS = {
   checkin_time: '14.00',
   checkout_time: '12.00',
   confirm_to: 'marketer', // konfirmasi WA ke: 'marketer' (bila ada nomornya, kalau tidak ke tamu) atau 'both'
+  commission_percent: '10', // komisi pemasar (% dari total), dibayar setelah tamu selesai menginap; 0 = tanpa komisi
   show_prices: '1', // '0' = harga disembunyikan dari halaman publik; harga diisi manual saat booking
   weekend_days: '5,6', // malam yang memakai harga akhir pekan: 0=Min, 1=Sen, ..., 5=Jum, 6=Sab
   dp_percent: '50',

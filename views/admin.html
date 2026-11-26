@@ -32,8 +32,10 @@
       </div>
       <nav class="wrap tabs" role="tablist" aria-label="Menu admin">
         <button role="tab" data-tab="booking" aria-selected="true">Booking <span class="count" id="n-pending" hidden></span></button>
+        <button role="tab" data-tab="tindak" aria-selected="false">Tindak lanjut <span class="count alert" id="n-inbox" hidden></span></button>
         <button role="tab" data-tab="kalender" aria-selected="false">Kalender</button>
         <button role="tab" data-tab="pemasar" aria-selected="false">Pemasar</button>
+        <button role="tab" data-tab="keuangan" aria-selected="false">Keuangan</button>
         <button role="tab" data-tab="harga" aria-selected="false">Harga</button>
         <button role="tab" data-tab="pengaturan" aria-selected="false">Pengaturan</button>
         <button role="tab" data-tab="pesan" aria-selected="false">Pesan</button>
@@ -44,6 +46,10 @@
       <section id="tab-booking" role="tabpanel">
         <div class="chips" id="filters"></div>
         <div id="list"></div>
+      </section>
+
+      <section id="tab-tindak" role="tabpanel" hidden>
+        <div id="inbox"></div>
       </section>
 
       <section id="tab-kalender" role="tabpanel" hidden>
@@ -103,10 +109,23 @@
             <div class="field"><label for="mk-name">Nama pemasar</label><input id="mk-name" maxlength="60" required></div>
             <div class="field"><label for="mk-phone">WhatsApp (opsional)</label><input id="mk-phone" type="tel" inputmode="tel" maxlength="20"></div>
           </div>
+          <div class="two">
+            <div class="field"><label for="mk-bank">Bank (opsional)</label><input id="mk-bank" maxlength="40" placeholder="Misalnya: BSI, BCA, BRI"></div>
+            <div class="field"><label for="mk-account">Nomor rekening</label><input id="mk-account" inputmode="numeric" maxlength="30"></div>
+          </div>
+          <div class="field"><label for="mk-holder">Atas nama rekening</label><input id="mk-holder" maxlength="60"></div>
           <div class="field"><label for="mk-note">Catatan (opsional)</label><input id="mk-note" maxlength="200" placeholder="Misalnya: agen dari Jakarta"></div>
           <button class="btn" type="submit">Tambah pemasar</button>
         </form>
         <div id="mk-list"></div>
+      </section>
+
+      <section id="tab-keuangan" role="tabpanel" hidden>
+        <div class="panel">
+          <div class="field"><label for="rp-month">Periode (bulan check-in)</label><select id="rp-month"></select></div>
+          <p class="catatan">Laporan menghitung booking yang sudah diterima. "Diterima" adalah uang yang sudah dicatat lewat Catat pembayaran di kartu booking.</p>
+        </div>
+        <div id="report"></div>
       </section>
 
       <section id="tab-harga" role="tabpanel" hidden>
@@ -164,6 +183,15 @@
                 <option value="both">Pemasar dan tamu</option>
               </select>
               <small>Bila booking tidak punya pemasar atau pemasarnya belum diisi nomor HP, konfirmasi dikirim ke tamu.</small>
+            </div>
+          </div>
+
+          <h2>Komisi pemasar</h2>
+          <div class="panel">
+            <div class="field">
+              <label for="s-commission_percent">Komisi pemasar (persen dari total transaksi)</label>
+              <input id="s-commission_percent" type="number" min="0" max="100">
+              <small>Dibayar setelah tamu selesai menginap (hari check-out), karena booking bisa dibatalkan sebelumnya. Admin diingatkan lewat WhatsApp tiap pagi dan di tab Tindak lanjut. Isi 0 bila tanpa komisi.</small>
             </div>
           </div>
 
@@ -234,6 +262,13 @@
         <div id="messages"></div>
       </section>
     </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head"><h2 id="modal-title"></h2><button id="modal-x" type="button" class="btn line mini">Tutup</button></div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
